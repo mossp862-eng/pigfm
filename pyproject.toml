@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pigfm"
+version = "0.2.0"
+description = "Police, intelligence and government frequency monitor"
+readme = "README.md"
+license = { file = "LICENSE.md" }
+requires-python = ">=3.10"
+authors = [{ name = "Sh4d0wm45k of The New Radicals" }]
+keywords = ["sdr", "rtl-sdr", "scanner", "p25", "gnuradio", "trunked-radio"]
+
+# GNURadio, gr-osmosdr and their Python bindings are system packages and are not
+# installable from PyPI. See the README for the apt line.
+dependencies = [
+    "numpy>=1.21",
+    "pyzmq>=22",
+]
+
+[project.urls]
+Homepage = "https://github.com/sh4d0wm45k/pigfm"
+
+[project.scripts]
+pigfm = "pigfm.app:main"
+
+[tool.setuptools]
+packages = ["pigfm", "pigfm.dsp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

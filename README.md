@@ -30,11 +30,15 @@ In a terminal window run:
 
 Update repositories `sudo apt update`
 
-Install dependencies `sudo apt install libzmq3-dev python3-zmq gnuradio rtl-sdr gr-osmosdr`
+Install dependencies `sudo apt install libzmq3-dev python3-zmq python3-numpy gnuradio rtl-sdr gr-osmosdr`
+
+PiGFM needs Python 3.10 or newer.
 
 Download the program files as a ZIP file and decompress or clone this repository
 
-Run directly `./pigfm.py config/<config_file>.ini` or `python3 pigfm.py config/<config_file>.ini`
+Run directly `./pigfm.py config/<config_file>.ini` or `python3 -m pigfm config/<config_file>.ini`
+
+Run `./pigfm.py --help` for the full list of options.
 
 These instructions work under Ubuntu and Raspberry Pi OS.
 
@@ -72,10 +76,56 @@ Once everything is up and running you might see some channels active in the main
 
 You might be able to take the receiver somewhere nearby a transmitter that you know is operating to get a feel for what kind of relationship there is between distance and the observed signal level.
 
+### Running without a receiver
+You can run the whole program with no dongle attached:
+
+`./pigfm.py --synthetic config/rmr.ini`
+
+This fabricates a noise floor and channels keying up at the same frame rate the
+real receiver produces, which is useful for trying PiGFM out, working on the
+interface, or running the tests. Add `--seed 42` for a repeatable run.
+
+### Development
+The program is a package. The signal path is separated from the interface so
+each piece can be tested on its own:
+
+```
+pigfm.py            entry point
+pigfm/
+  config.py         typed config, saves without destroying your comments
+  radio.py          GNURadio flowgraph, spectrum branch and raw IQ branch
+  frames.py         frame sources: the receiver, or synthetic traffic
+  dsp/              noise floor levelling, channel power reduction
+  scanner.py        channel activity detection, no interface code
+  eventlog.py       event logging
+  ui.py             curses windows
+  app.py            wiring and the main loop
+```
+
+Run the tests with `python3 tests/run.py`, or with `pytest` if you have it.
+`tests/reference.py` holds a verbatim copy of the original single-file version
+of the signal path, and the tests assert the current code produces byte-identical
+output for the same input. Any change to the DSP or the spectrum rendering that
+alters behaviour will fail there, on purpose.
+
+### Decoding
+`radio.py` carries a second branch that extracts a single 12.5kHz channel as raw
+IQ at 50kSPS and publishes it on port 5556. Nothing consumes it yet. It exists so
+that channel metadata decoding (see the improvements section) can be built
+without restructuring the receiver. Enable it with `--iq`, and choose the channel
+with `--iq-channel`. It costs a little CPU, so it is off by default.
+
 ### More info
 Although PiGFM was developed to monitor a digital (P25) trunked radio system it doesn't demodulate the channels - this means it will still detect signals in other trunked radio systems like TETRA in the EU and even older analogue systems.
 
 PiGFM is a terminal program so it's lightweight and easy to install for users. The program consists of a GNURadio flowgraph that sets up the receiver, performs an FFT and filtering and then passes the framed data to a Python script. The script is responsible for UI, channel monitoring and alarm etc.
+
+### A note on frequency accuracy
+Versions before 0.2.0 calculated channel frequencies half a channel low, which
+put the displayed frequency scale one whole channel out and placed channel 0
+outside the range the receiver can actually see. This is fixed. If you noted
+channel numbers against frequencies using an older version, the frequencies were
+one channel spacing (usually 12.5kHz) below the truth.
 
 ### Improvements
 There are a lot of improvements that could be made to PiGFM!
