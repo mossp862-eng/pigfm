@@ -45,12 +45,21 @@ def _write(text = SAMPLE):
 
 
 def test_loads_shipped_config():
+	"""Structure only.
+
+	Deliberately asserts nothing about active_threshold, mute or ignore_list:
+	the program rewrites those three keys on exit, so any run of PiGFM against
+	real hardware legitimately changes them. Their behaviour is covered against
+	a temporary file below instead.
+	"""
 	config = load('config/rmr.ini')
 
 	assert config.rf.n_channels == 256
-	assert config.alarm.ignore_list == {248}
-	assert config.alarm.mute is False
-	assert config.logging.do_log is True
+	assert config.rf.centre_freq == 171_293_750
+	assert config.rf.channel_spacing == 12_500
+	assert config.display.system_name == 'Regional Mobile Radio (VIC)'
+	assert config.logging.filename == 'rmr.log'
+	assert isinstance(config.alarm.ignore_list, set)
 
 
 def test_sample_rate_and_fft_size_are_derived():
