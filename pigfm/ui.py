@@ -152,7 +152,7 @@ class Ui:
 		self.activity_win = self.main_win.derwin(activity_height, PANEL_WIDTH,
 												 self.layout.panel_top, ACTIVITY_X)
 		self.activity_win.box()
-		self._centre_title(self.activity_win, self.config.display.system_name)
+		self._centre_title(self.activity_win, *self._activity_title())
 
 		self.control_win = self.main_win.derwin(CONTROL_HEIGHT, PANEL_WIDTH,
 												self.layout.panel_top, CONTROL_X)
@@ -302,8 +302,23 @@ class Ui:
 
 	# Helpers ---------------------------------------------------------------
 
-	def _centre_title(self, win, title: str) -> None:
-		self._safe_addstr(win, 0, max(0, (PANEL_WIDTH - len(title)) // 2), title, curses.A_BOLD)
+	def _activity_title(self) -> tuple[str, int]:
+		"""Name of the system, and a loud marker when a tuning offset is active.
+
+		Without this it is far too easy to forget you are listening to the base
+		stations and read the channel numbers as if they were the portables.
+		"""
+		name = self.config.display.system_name
+
+		if not self.config.rf.tuning_offset:
+			return name, curses.A_BOLD
+
+		marker = f'{name} [OFFSET {self.config.rf.tuning_offset / 1e6:+.3f}MHz]'
+
+		return marker[: PANEL_WIDTH - 2], curses.A_BOLD | curses.color_pair(COLOUR_ALERT)
+
+	def _centre_title(self, win, title: str, attr: int = curses.A_BOLD) -> None:
+		self._safe_addstr(win, 0, max(0, (PANEL_WIDTH - len(title)) // 2), title, attr)
 
 	@staticmethod
 	def _safe_addstr(win, y: int, x: int, text: str, attr: int = 0) -> None:

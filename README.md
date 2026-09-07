@@ -76,6 +76,31 @@ Once everything is up and running you might see some channels active in the main
 
 You might be able to take the receiver somewhere nearby a transmitter that you know is operating to get a feel for what kind of relationship there is between distance and the observed signal level.
 
+### Checking your setup with the base stations
+Portable and mobile radios only transmit when someone keys up or the radio
+reports in, so a quiet band tells you nothing: you cannot tell a working setup
+from a broken one. The base stations transmit far more often and with much more
+power, so they are the quickest way to prove the receiver, the antenna and your
+centre frequency are all right.
+
+`./pigfm.py --base-station config/rmr.ini`
+
+This tunes down by `duplex_offset` in the `[rf]` section of your config, 4.5MHz
+by default, to listen to the base station downlink instead of the uplink. The
+activity window title turns red and shows the offset so you cannot forget which
+one you are looking at.
+
+`--tuning-offset <Hz>` does the same thing with any shift you like, if your
+system uses a different split or you just want to look somewhere else:
+
+`./pigfm.py --tuning-offset -4600000 config/rmr.ini`
+
+Both options are for testing and neither is saved. While an offset is applied
+PiGFM will not write anything back to your config file at all, because channel
+numbers refer to different frequencies then and an ignore list built while
+listening to the base stations would suppress unrelated channels on your next
+normal run.
+
 ### Running without a receiver
 You can run the whole program with no dongle attached:
 

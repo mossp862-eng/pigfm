@@ -56,7 +56,7 @@ class Radio(gr.top_block):
 
 		self.source = osmosdr.source(args = device_args)
 		self.source.set_sample_rate(rf.samp_rate)
-		self.source.set_center_freq(rf.centre_freq)
+		self.source.set_center_freq(rf.tuned_freq)
 		self.source.set_gain(rf.gain)
 
 		self._build_spectrum_branch(rf, spectrum_endpoint, keep_one_in_n)

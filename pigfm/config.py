@@ -17,6 +17,12 @@ BINS_PER_CHANNEL = 16
 # row spans this many dB.
 DB_PER_ROW = 2
 
+# Split between the base station downlink and the mobile uplink. Trunked systems
+# transmit and receive on paired frequencies a fixed distance apart, and the
+# mobile side sits this far above the base side. 4.5 MHz is typical, but it
+# varies by system and band, so it is a config key.
+DEFAULT_DUPLEX_OFFSET = 4_500_000
+
 
 @dataclass
 class RfConfig:
@@ -25,6 +31,27 @@ class RfConfig:
 	gain: float
 	iir_alpha: float
 	n_channels: int
+	duplex_offset: float = DEFAULT_DUPLEX_OFFSET
+
+	# Temporary shift applied to what the receiver tunes to, for testing. Not
+	# persisted: see Config.save_mutable.
+	tuning_offset: float = 0.0
+
+	@property
+	def tuned_freq(self) -> float:
+		"""What the receiver is actually tuned to.
+
+		Normally the configured centre frequency. With a tuning offset applied it
+		is shifted, which is how base station monitoring works: everything
+		downstream derives from this, so the channel map, the frequency axis and
+		the IQ tap all follow without any of them knowing why.
+		"""
+		return self.centre_freq + self.tuning_offset
+
+	@property
+	def base_station_offset(self) -> float:
+		"""Tuning offset that swaps the mobile uplink for the base downlink."""
+		return -self.duplex_offset
 
 	@property
 	def samp_rate(self) -> float:
@@ -50,13 +77,17 @@ class RfConfig:
 		Nyquist band the dongle can even see. Verified empirically for all 256
 		channels in tests/test_frequency.py.
 		"""
-		return (self.centre_freq
+		return (self.tuned_freq
 				+ (channel - self.n_channels / 2) * self.channel_spacing
 				+ self.channel_spacing / 2)
 
 	def channel_offset(self, channel: float) -> float:
-		"""Baseband offset of a channel from the tuned centre, for the IQ tap."""
-		return self.channel_to_freq(channel) - self.centre_freq
+		"""Baseband offset of a channel from the tuned centre, for the IQ tap.
+
+		Independent of any tuning offset: the channel sits in the same place in
+		the passband wherever the receiver happens to be tuned.
+		"""
+		return self.channel_to_freq(channel) - self.tuned_freq
 
 
 @dataclass
@@ -111,20 +142,35 @@ class Config:
 	logging: LoggingConfig
 	path: Path
 
-	def save_mutable(self) -> None:
-		"""Persist only the settings the UI can change.
+	@property
+	def is_temporarily_tuned(self) -> bool:
+		return self.rf.tuning_offset != 0.0
+
+	def save_mutable(self) -> bool:
+		"""Persist only the settings the UI can change. Returns False if skipped.
 
 		The original rewrote the whole file through configparser on exit, which
 		silently destroyed every comment and reordered the sections. Config files
 		here are hand-written and shared between users, so they are edited in
 		place instead.
+
+		Nothing is written while a tuning offset is in force. Channel numbers
+		mean different frequencies then, so an ignore list built while listening
+		to base stations would silently suppress unrelated channels on the next
+		normal run. The guard lives here rather than in the caller so it cannot
+		be forgotten.
 		"""
+		if self.is_temporarily_tuned:
+			return False
+
 		updates = {
 			('scanner', 'active_threshold'): str(self.scanner.active_threshold),
 			('alarm', 'mute'): str(self.alarm.mute),
 			('alarm', 'ignore_list'): ', '.join(str(c) for c in sorted(self.alarm.ignore_list)),
 		}
 		_update_ini_in_place(self.path, updates)
+
+		return True
 
 
 def load(path: str | Path) -> Config:
@@ -145,6 +191,8 @@ def load(path: str | Path) -> Config:
 			gain = parser.getfloat('rf', 'gain'),
 			iir_alpha = parser.getfloat('rf', 'iir_alpha'),
 			n_channels = parser.getint('rf', 'n_channels'),
+			duplex_offset = parser.getfloat('rf', 'duplex_offset',
+											fallback = DEFAULT_DUPLEX_OFFSET),
 		),
 		display = DisplayConfig(
 			system_name = parser.get('display', 'system_name'),

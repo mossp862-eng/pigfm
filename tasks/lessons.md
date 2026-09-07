@@ -27,3 +27,19 @@ old implementation is preserved somewhere runnable.
 
 **How to apply:** on any behaviour-preserving refactor, copy the original pure logic
 into a test-only reference module as step one, with a comment forbidding edits to it.
+
+## Do not assert on values the program itself rewrites
+Caught: 2026-09-07, PiGFM tuning offset work.
+
+`test_loads_shipped_config` asserted `ignore_list == {248}` against
+`config/rmr.ini`. Vape Slag ran PiGFM against real hardware, adjusted the
+threshold and ignored a strong local channel, and the program saved those
+changes back to that exact file, as designed. The test then failed.
+
+**Why:** the file is both a checked-in example and live user state. Any test
+asserting on the mutable half of it fails the first time someone actually uses
+the program, which trains people to ignore failing tests.
+
+**How to apply:** assert structure and immutable fields against checked-in
+fixtures. Test mutable behaviour against a temporary copy. Before writing an
+assertion on a file, ask whether the program under test writes to it.

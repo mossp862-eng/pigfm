@@ -67,3 +67,17 @@ Plan: restructure for P25 metadata decode, no new user-facing features this phas
    order rather than set-iteration order, so logs are reproducible. Only
    observable when more than 30 channels trigger in a single frame.
 3. Config saving no longer rewrites the whole INI, so comments survive.
+
+---
+
+# Feature: temporary tuning offsets
+
+- [x] `duplex_offset` config key in `[rf]`, defaults to 4.5MHz when absent
+- [x] `RfConfig.tuned_freq`, everything downstream derives from it
+- [x] `--base-station` tunes down by the duplex offset
+- [x] `--tuning-offset HZ` for an arbitrary shift, mutually exclusive with the above
+- [x] Activity window title shows the offset in red so the mode is unmissable
+- [x] `save_mutable` refuses to write while offset, guard lives in config not the caller
+- [x] 11 tests
+- [x] Verified on hardware: retunes 171.29375 -> 166.79375 MHz, receives a
+      populated band with a strong base signal at 168.000 MHz (-0.5 dB)

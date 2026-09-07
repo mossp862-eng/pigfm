@@ -143,7 +143,27 @@ def parse_args(argv = None):
 	parser.add_argument('--device-args', default = '',
 						help = 'osmosdr device arguments, e.g. "rtl=0"')
 
+	# Testing aids. Both shift what the receiver tunes to without touching the
+	# config file, and neither is persisted on exit.
+	tuning = parser.add_mutually_exclusive_group()
+	tuning.add_argument('--base-station', action = 'store_true',
+						help = 'listen to the base station downlink instead of the '
+							   'portables, by tuning down the duplex offset. Base '
+							   'stations transmit often, so this is the quickest way '
+							   'to confirm a working setup')
+	tuning.add_argument('--tuning-offset', type = float, default = None, metavar = 'HZ',
+						help = 'shift the tuned frequency by this many Hz, for testing')
+
 	return parser.parse_args(argv)
+
+
+def apply_tuning_offset(config, args) -> None:
+	"""Both options are temporary and neither is written back to the config."""
+	if args.base_station:
+		config.rf.tuning_offset = config.rf.base_station_offset
+
+	elif args.tuning_offset:
+		config.rf.tuning_offset = args.tuning_offset
 
 
 def main(argv = None) -> int:
@@ -154,6 +174,8 @@ def main(argv = None) -> int:
 	except (FileNotFoundError, KeyError) as exc:
 		print(f'pigfm: {exc}', file = sys.stderr)
 		return 1
+
+	apply_tuning_offset(config, args)
 
 	radio = None
 
@@ -191,6 +213,8 @@ def main(argv = None) -> int:
 		if radio is not None:
 			radio.close()
 
-		config.save_mutable()
+		if not config.save_mutable():
+			print(f'pigfm: tuned {config.rf.tuning_offset / 1e6:+.4f} MHz off {args.config}, '
+				  f'so settings were not saved back to it', file = sys.stderr)
 
 	return 0
