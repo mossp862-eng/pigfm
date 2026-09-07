@@ -11,8 +11,8 @@ import sys
 
 from . import config as config_module
 from .eventlog import EventLog
-from .frames import (DEFAULT_TIMEOUT_MS, FrameSource, SyntheticFrameSource, ZmqFrameSource,
-                     nominal_frame_interval)
+from .frames import (DEFAULT_TIMEOUT_MS, FrameSource, SymbolSource, SyntheticFrameSource,
+                     ZmqFrameSource, nominal_frame_interval)
 from .scanner import ChannelScanner
 from .ui import Ui
 
@@ -143,6 +143,17 @@ def parse_args(argv = None):
 	parser.add_argument('--device-args', default = '',
 						help = 'osmosdr device arguments, e.g. "rtl=0"')
 
+	parser.add_argument('--decode', action = 'store_true',
+						help = 'decode P25 metadata (talkgroup and radio IDs) and print '
+							   'it to the terminal instead of running the spectrum display')
+	parser.add_argument('--decode-scan', action = 'store_true',
+						help = 'sweep the strongest channels and report which carry P25 '
+							   'C4FM, to find a control channel worth decoding')
+	parser.add_argument('--decode-channel', type = int, default = None, metavar = 'N',
+						help = 'pin decoding to one channel instead of following activity. '
+							   'Use this for a control channel, which is where the '
+							   'trunking identities are sent')
+
 	# Testing aids. Both shift what the receiver tunes to without touching the
 	# config file, and neither is persisted on exit.
 	tuning = parser.add_mutually_exclusive_group()
@@ -166,6 +177,37 @@ def apply_tuning_offset(config, args) -> None:
 		config.rf.tuning_offset = args.tuning_offset
 
 
+def run_decode(config, args) -> int:
+	"""Terminal decode mode. Needs a receiver: there is nothing to decode in
+	fabricated traffic."""
+	if args.synthetic:
+		print('pigfm: --decode needs a real receiver, not --synthetic', file = sys.stderr)
+		return 1
+
+	from .decode import run_diagnostic, scan_channels
+	from .radio import Radio
+
+	channel = args.decode_channel if args.decode_channel is not None else args.iq_channel
+
+	radio = Radio(config.rf, enable_iq = args.iq, enable_decode = True,
+				  decode_channel = channel, device_args = args.device_args)
+	radio.start()
+
+	spectrum = ZmqFrameSource(config.rf.n_channels)
+	symbols = SymbolSource()
+
+	try:
+		if args.decode_scan:
+			return scan_channels(config, radio, spectrum, symbols)
+
+		return run_diagnostic(config, radio, spectrum, symbols,
+							  pinned_channel = args.decode_channel)
+	finally:
+		spectrum.close()
+		symbols.close()
+		radio.close()
+
+
 def main(argv = None) -> int:
 	args = parse_args(argv)
 
@@ -176,6 +218,9 @@ def main(argv = None) -> int:
 		return 1
 
 	apply_tuning_offset(config, args)
+
+	if args.decode or args.decode_scan:
+		return run_decode(config, args)
 
 	radio = None
 
