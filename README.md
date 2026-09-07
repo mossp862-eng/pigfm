@@ -101,6 +101,40 @@ numbers refer to different frequencies then and an ignore list built while
 listening to the base stations would suppress unrelated channels on your next
 normal run.
 
+### Decoding who is transmitting
+P25 systems send the radio ID and the talkgroup ID **unencrypted, even on
+encrypted systems**. PiGFM can decode them.
+
+First find a control channel. A strong signal is not necessarily a P25 one, so
+PiGFM will tell you which is which:
+
+`./pigfm.py --decode-scan --base-station config/rmr.ini`
+
+This surveys the band, then tests the strongest channels and reports whether each
+is really carrying P25 C4FM. Use `--base-station`, because the control channel is
+transmitted continuously by the base station on the downlink.
+
+Then decode it:
+
+`./pigfm.py --decode --base-station --decode-channel 42 config/rmr.ini`
+
+Identities are printed as they arrive, with a periodic per channel summary that
+marks the control channel. Without `--decode-channel` the decoder follows
+whichever channel most recently became active, which is useful for watching
+traffic but will often land on a voice channel. Voice channels carry their
+identities in link control, which PiGFM does not decode yet, so pin the control
+channel if you want IDs.
+
+How it works: the receiver already extracts one 12.5kHz channel as raw IQ. That
+is demodulated as C4FM and clock recovered inside GNURadio, so what reaches the
+Python side is 4800 symbols per second. From there PiGFM correlates the frame
+sync, decodes the Network Identifier with a BCH(63,16) code to get the system NAC
+and the frame type, and for trunking frames runs a Viterbi decoder over the rate
+1/2 trellis code, checks the CRC, and reads the talkgroup and radio IDs out of
+the result.
+
+Every block is CRC checked, so identities that appear have passed a 16 bit check.
+
 ### Running without a receiver
 You can run the whole program with no dongle attached:
 
@@ -157,4 +191,6 @@ There are a lot of improvements that could be made to PiGFM!
 - More config files for specific systems / locations.
 - A prebuilt Raspberry Pi image or bootable USB drive with an operating system and PiGFM installed.
 - 'Block' scanning - monitor several blocks of channels; this could be accomplished by retuning the receiver back and forth or with multiple receivers.
-- Decode metadata from the active channels - even on encrypted channels the radio ID and talk group ID are sent unencrypted. This could be used to differentiate between different users of the trunked radio system. The [OP25](https://github.com/boatbod/op25) project is open source software that can decode and monitor P25 networks. This could possibly be integrated with PiGFM to add these features.
+- ~~Decode metadata from the active channels~~ Done for P25 trunking frames, see 'Decoding who is transmitting' above. Still to do: link control on voice channels, so identities are recovered during a call as well as from the control channel. That needs Reed-Solomon and Hamming decoding on top of what is already there.
+- Follow a channel grant onto its traffic channel, so a call can be tracked from the control channel to the voice channel carrying it.
+- P25 Phase 2 is TDMA and does not use C4FM, so it needs a different demodulator.

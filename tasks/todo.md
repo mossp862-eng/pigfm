@@ -81,3 +81,46 @@ Plan: restructure for P25 metadata decode, no new user-facing features this phas
 - [x] 11 tests
 - [x] Verified on hardware: retunes 171.29375 -> 166.79375 MHz, receives a
       populated band with a strong base signal at 168.000 MHz (-0.5 dB)
+
+---
+
+# Feature: P25 metadata decode
+
+- [x] `dsp/p25/constants.py`, verified against TIA-102 (sync decomposition round trips)
+- [x] `dsp/p25/fec.py`: CRC-16, BCH(63,16) with the generator derived from the
+      field rather than hardcoded, 196-bit interleaver
+- [x] `dsp/p25/trellis.py`: rate 1/2 Viterbi decoder
+- [x] `dsp/p25/demod.py`: C4FM demod + symbol sync as a gr.hier_block2
+- [x] `dsp/p25/symbols.py`: slicing, sync correlation, normalisation, C4FM quality
+- [x] `dsp/p25/framing.py`: streaming framer, NID decode
+- [x] `dsp/p25/tsbk.py`: TSBK decode, talkgroup and radio IDs
+- [x] `decode.py`: channel following, diagnostic mode, C4FM scan
+- [x] `--decode`, `--decode-channel`, `--decode-scan`
+- [x] 25 new tests including a full RF loopback (58 total)
+
+## Verification results
+
+- BCH generator comes out at degree 47 by construction, corrects all 11 errors,
+  degrades correctly past its limit (12 err: 1/200, 18 err: 200/200 fail)
+- Trellis Viterbi: exact round trip, 289/300 recovery with 8 of 49 symbols corrupted
+- 0 of 500 random blocks pass the TSBK CRC, so a live pass rate is meaningful
+- **Full RF loopback**: TSBK -> C4FM -> real GNURadio demod -> exact talkgroup
+  and radio IDs recovered, clean and at 20/12/8 dB SNR
+- Front end holds sync to 6 dB SNR, loses it at 3 dB
+
+## Live validation: NOT ACHIEVED
+
+There is no receivable P25 Phase 1 signal here. Measured, not assumed:
+
+- Swept the 10 strongest channels on the mobile uplink and the base downlink,
+  and at -4.50 / -4.55 / -4.60 / -4.65 MHz duplex offsets. No C4FM anywhere.
+- The strongest carrier (168.0000 MHz at -0.7 dB) was examined directly: it
+  occupies exactly 12.5 kHz and deviates 1155 Hz, but its instantaneous
+  frequency is a single Gaussian peak rather than four clusters at
+  +/-600/+/-1800 Hz. That is analogue narrowband FM, not C4FM.
+
+**Consequence:** the trellis constellation table and the interleaver stride are
+still unproven. Round trip tests encode and decode with the same table, so they
+pass either way. Only live traffic with passing CRCs confirms them. If a real
+system is found and sync and NAC look stable while CRCs fail, those two
+constants are the first suspects.

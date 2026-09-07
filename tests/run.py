@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 MODULES = ['tests.test_golden', 'tests.test_config', 'tests.test_scanner', 'tests.test_frequency',
-           'tests.test_tuning']
+           'tests.test_tuning', 'tests.test_p25', 'tests.test_p25_rf']
 
 
 def main() -> int:
