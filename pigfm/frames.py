@@ -16,6 +16,7 @@ from .dsp.channels import channel_powers
 
 SPECTRUM_ENDPOINT = 'tcp://127.0.0.1:5555'
 IQ_ENDPOINT = 'tcp://127.0.0.1:5556'
+SYMBOL_ENDPOINT = 'tcp://127.0.0.1:5557'
 
 # Poll interval when waiting on the radio. Short enough that the UI stays
 # responsive to keys, long enough not to spin the CPU.
@@ -171,3 +172,39 @@ def make_frame(active_channels = (), n_channels: int = 256, rng = None,
 		frame[lo: hi] = signal_db + rng.normal(0.0, 0.3, hi - lo)
 
 	return frame.astype(np.float32)
+
+
+class SymbolSource:
+	"""Pulls recovered C4FM symbols published by the flowgraph.
+
+	Unlike the spectrum source this returns whatever has arrived rather than
+	fixed size frames, because the framer downstream is indifferent to block
+	boundaries.
+	"""
+
+	def __init__(self, endpoint: str = SYMBOL_ENDPOINT):
+		self._context = zmq.Context.instance()
+		self._socket = self._context.socket(zmq.PULL)
+		self._socket.connect(endpoint)
+
+		self._poller = zmq.Poller()
+		self._poller.register(self._socket, zmq.POLLIN)
+
+	def get_symbols(self, timeout_ms: int = DEFAULT_TIMEOUT_MS) -> np.ndarray:
+		"""Every symbol waiting, or an empty array. Never blocks past the timeout."""
+		if not self._poller.poll(timeout_ms):
+			return np.empty(0, dtype = np.float32)
+
+		blocks = []
+
+		while True:
+			try:
+				blocks.append(np.frombuffer(self._socket.recv(zmq.NOBLOCK), dtype = np.float32))
+			except zmq.ZMQError:
+				break
+
+		return np.concatenate(blocks) if blocks else np.empty(0, dtype = np.float32)
+
+	def close(self) -> None:
+		self._poller.unregister(self._socket)
+		self._socket.close(linger = 0)

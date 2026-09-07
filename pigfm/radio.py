@@ -18,7 +18,8 @@ from gnuradio.filter import firdes
 import osmosdr
 
 from .config import RfConfig
-from .frames import IQ_ENDPOINT, SPECTRUM_ENDPOINT
+from .dsp.p25.demod import C4fmDemod
+from .frames import IQ_ENDPOINT, SPECTRUM_ENDPOINT, SYMBOL_ENDPOINT
 
 # Sample rate of the extracted channel. P25 C4FM runs at 4800 symbols/s, so this
 # is a little over ten samples per symbol, which is comfortable for timing
@@ -48,7 +49,8 @@ class Radio(gr.top_block):
 	def __init__(self, rf: RfConfig, spectrum_endpoint: str = SPECTRUM_ENDPOINT,
 				 iq_endpoint: str = IQ_ENDPOINT, enable_iq: bool = False,
 				 iq_rate: int = IQ_RATE, keep_one_in_n: int = DEFAULT_KEEP_ONE_IN_N,
-				 decode_channel: int | None = None, device_args: str = ''):
+				 decode_channel: int | None = None, device_args: str = '',
+				 enable_decode: bool = False, symbol_endpoint: str = SYMBOL_ENDPOINT):
 		super().__init__('pigfm_radio', catch_exceptions = True)
 
 		self.rf = rf
@@ -62,10 +64,13 @@ class Radio(gr.top_block):
 		self._build_spectrum_branch(rf, spectrum_endpoint, keep_one_in_n)
 
 		self._xlate = None
+		self.demod = None
 
-		if enable_iq:
+		if enable_iq or enable_decode:
 			channel = rf.n_channels // 2 if decode_channel is None else decode_channel
-			self._build_iq_branch(rf, iq_endpoint, iq_rate, channel)
+			self._build_iq_branch(rf, iq_endpoint, iq_rate, channel,
+								  enable_iq = enable_iq, enable_decode = enable_decode,
+								  symbol_endpoint = symbol_endpoint)
 
 	def _build_spectrum_branch(self, rf: RfConfig, endpoint: str, keep_one_in_n: int) -> None:
 		"""Unchanged signal path. Do not alter without re-running the golden-master tests."""
@@ -83,7 +88,9 @@ class Radio(gr.top_block):
 		self.connect(self.source, self.to_vector, self.fft, self.mag_squared,
 					 self.averager, self.decimator, self.to_db, self.spectrum_sink)
 
-	def _build_iq_branch(self, rf: RfConfig, endpoint: str, iq_rate: int, channel: int) -> None:
+	def _build_iq_branch(self, rf: RfConfig, endpoint: str, iq_rate: int, channel: int,
+						 enable_iq: bool = True, enable_decode: bool = False,
+						 symbol_endpoint: str = SYMBOL_ENDPOINT) -> None:
 		"""Extract one 12.5 kHz channel as raw IQ, for the decoder to consume.
 
 		Decimation is split in two. A single stage from 3.2 MSPS straight down to
@@ -101,17 +108,32 @@ class Radio(gr.top_block):
 		self._xlate = gr_filter.freq_xlating_fir_filter_ccf(
 			coarse_decim, coarse_taps, rf.channel_offset(channel), rf.samp_rate)
 		self.channel_filter = gr_filter.fir_filter_ccf(fine_decim, fine_taps)
-		self.iq_sink = zeromq.push_sink(gr.sizeof_gr_complex, 1, endpoint,
-										SINK_TIMEOUT_MS, False, -1, True)
 
-		self.connect(self.source, self._xlate, self.channel_filter, self.iq_sink)
+		self.connect(self.source, self._xlate, self.channel_filter)
 
 		self.decode_channel = channel
 		self.actual_iq_rate = intermediate_rate / fine_decim
 
+		if enable_iq:
+			self.iq_sink = zeromq.push_sink(gr.sizeof_gr_complex, 1, endpoint,
+											SINK_TIMEOUT_MS, False, -1, True)
+			self.connect(self.channel_filter, self.iq_sink)
+
+		if enable_decode:
+			# C4FM demodulation and symbol recovery run here, in C++. What
+			# reaches Python is 4800 symbols per second, which is nothing.
+			self.demod = C4fmDemod(self.actual_iq_rate)
+			self.symbol_sink = zeromq.push_sink(gr.sizeof_float, 1, symbol_endpoint,
+												SINK_TIMEOUT_MS, False, -1, True)
+			self.connect(self.channel_filter, self.demod, self.symbol_sink)
+
 	@property
 	def iq_enabled(self) -> bool:
 		return self._xlate is not None
+
+	@property
+	def decode_enabled(self) -> bool:
+		return self.demod is not None
 
 	def set_decode_channel(self, channel: int) -> None:
 		"""Point the IQ branch at a different channel without retuning the dongle."""
