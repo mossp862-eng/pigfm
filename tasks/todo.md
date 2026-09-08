@@ -208,3 +208,37 @@ a channel hovering at the threshold produced one fake burst hundreds of seconds
 long: it reported 171.8500 MHz at 76% duty when the channel was actually present
 in 0.3% of frames. v2 judges each channel against its own rolling 20th
 percentile and requires a burst to be hot for at least half its span.
+
+## Long watch results (several hours, 57 supervisor cycles)
+
+Every channel judged against its own rolling baseline. **1441 transmissions
+logged.** The distribution is the useful part:
+
+| band | bursts | what it means |
+|---|---|---|
+| base station downlink | 1437 | 12 channels, up to 1354 s airtime, +12 to +20 dB |
+| mobile uplink | 4 | effectively nothing |
+
+Base stations are high power on hilltops and carry a long way; portables are low
+power and held in a hand. Hearing 1437 base transmissions and 4 mobile ones is
+the signature of a receiver a long way from any actual activity. That matters
+directly for the goal of noticing nearby radios: there are none to notice here.
+
+Every busy channel was demodulated **during its bursts**, not averaged across
+the silence: 5 to 17 second transmissions, deviation 1631-2434 Hz, no symbol
+clock in either family. Burst lengths that long are voice, not signalling.
+
+## Second detector bug, found and fixed
+`--decode-scan` built the demodulator but only drained the IQ sink. A ZMQ sink
+backpressures the whole flowgraph while it waits on its timeout, so the unread
+symbol and FM sinks made the receiver overrun continuously and nine of twelve
+channels reported "no data". Fixed by building only the branch being read, and
+by cutting the sink timeout from 100 ms to 20 ms so an idle branch costs
+throughput instead of wedging the graph.
+
+## An analysis error worth recording
+The lower RMR band capture was centred on an exact 12.5 kHz multiple, which put
+the analysis channel grid exactly half a channel off the real one. Every real
+channel straddled two analysis channels and was clipped by the 6.25 kHz filter.
+The downlink and uplink captures happened to be centred on half-multiples and
+were correctly aligned; only this one was wrong. Rescanned with the grid fixed.

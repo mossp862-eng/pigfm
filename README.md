@@ -123,11 +123,19 @@ P25 systems send the radio ID and the talkgroup ID **unencrypted, even on
 encrypted systems**. PiGFM can decode them.
 
 First find a control channel. **A strong signal is very often not a P25 one**,
-and you cannot tell by looking at a spectrum display. PiGFM measures it properly:
-any signal keyed at a symbol rate puts a spectral line at that rate, so PiGFM
-looks for a line at P25's 4800 symbols per second. Genuine C4FM scores tens to
-hundreds of times above the surrounding spectrum; analogue FM and noise score
-about 2. Nothing else distinguishes them reliably.
+and you cannot tell by looking at a spectrum display. PiGFM measures it properly.
+
+Any signal keyed at a symbol rate carries a spectral line at that rate, but where
+that line appears depends on how the signal is keyed. P25 Phase 1 keys the
+frequency, so its clock shows up in the instantaneous frequency. P25 Phase 2 keys
+the phase, so there is nothing in the instantaneous frequency at all and its clock
+shows up in the envelope instead. PiGFM tests for both, because each is completely
+invisible to the other test:
+
+| | Phase 1 C4FM | Phase 2 downlink | analogue FM | noise |
+|---|---|---|---|---|
+| C4FM column | 50x and up | ~2x | ~2x | ~1.5x |
+| Phase2 column | ~1.4x | 60x and up | ~2x | ~1.5x |
 
 `./pigfm.py --decode-scan --base-station config/rmr.ini`
 
@@ -205,6 +213,20 @@ with `--iq-channel`. It costs a little CPU, so it is off by default.
 Although PiGFM was developed to monitor a digital (P25) trunked radio system it doesn't demodulate the channels - this means it will still detect signals in other trunked radio systems like TETRA in the EU and even older analogue systems.
 
 PiGFM is a terminal program so it's lightweight and easy to install for users. The program consists of a GNURadio flowgraph that sets up the receiver, performs an FFT and filtering and then passes the framed data to a Python script. The script is responsible for UI, channel monitoring and alarm etc.
+
+### Known frequencies for RMR
+The Regional Mobile Radio network in Victoria is a P25 Phase II system on VHF,
+with base station downlinks between **163.6 and 168.2 MHz**. Its site and control
+channel frequencies are published in the
+[RadioReference database](https://www.radioreference.com/db/sid/7679) and in the
+[ACMA licence register](https://www.acma.gov.au/register-radiocommunications-licences-rrl),
+which you can filter by trading name to see every site and its frequencies.
+
+The shipped `config/rmr.ini` centres on the mobile uplink, so `--base-station`
+puts you on the downlink where the control channel is. Note that the RMR band is
+wider than one 3.2 MHz block: the shipped config with `--base-station` covers
+165.2 to 168.4 MHz, so to sweep the lower part of the band as well you will need
+`--tuning-offset -6893750`, which centres on 164.4 MHz.
 
 ### A note on frequency accuracy
 Versions before 0.2.0 calculated channel frequencies half a channel low, which
