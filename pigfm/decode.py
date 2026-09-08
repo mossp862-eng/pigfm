@@ -315,7 +315,7 @@ def run_diagnostic(config: Config, radio, spectrum_source, symbol_source,
 
 def scan_channels(config: Config, radio, spectrum_source, symbol_source,
 				  fm_source = None, iq_source = None, n_channels: int = 12,
-				  dwell_seconds: float = 3.0, survey_seconds: float = 10.0) -> int:
+				  dwell_seconds: float = 8.0, survey_seconds: float = 10.0) -> int:
 	"""Sweep the strongest channels and score each for P25 C4FM.
 
 	Finding the control channel is the hard part of using a trunking decoder,
@@ -357,6 +357,9 @@ def scan_channels(config: Config, radio, spectrum_source, symbol_source,
 
 	candidates = [int(c) for c in np.argsort(peak)[-n_channels:][::-1]]
 
+	# Long enough to catch a burst on a channel that only transmits occasionally:
+	# a three second dwell misses a channel busy a tenth of the time more often
+	# than it catches it, and then there is nothing to gate on.
 	print(f'\nTesting the {len(candidates)} strongest channels ({dwell_seconds:.0f}s each).')
 	print('Both P25 families are tested: Phase 1 C4FM keys the frequency, Phase 2')
 	print('keys the phase, and each is invisible to the other test.\n')
