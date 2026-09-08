@@ -3,3 +3,7 @@ __pycache__/
 *.sublime-project
 *.sublime-workspace
 *.log
+# Raw IQ captures, hundreds of MB each
+.captures/
+*.cf32
+sightings.log
