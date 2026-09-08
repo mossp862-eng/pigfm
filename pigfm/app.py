@@ -11,8 +11,8 @@ import sys
 
 from . import config as config_module
 from .eventlog import EventLog
-from .frames import (DEFAULT_TIMEOUT_MS, FrameSource, SymbolSource, SyntheticFrameSource,
-                     ZmqFrameSource, nominal_frame_interval)
+from .frames import (DEFAULT_TIMEOUT_MS, FM_ENDPOINT, FrameSource, SymbolSource,
+                     SyntheticFrameSource, ZmqFrameSource, nominal_frame_interval)
 from .scanner import ChannelScanner
 from .ui import Ui
 
@@ -146,6 +146,13 @@ def parse_args(argv = None):
 	parser.add_argument('--decode', action = 'store_true',
 						help = 'decode P25 metadata (talkgroup and radio IDs) and print '
 							   'it to the terminal instead of running the spectrum display')
+	parser.add_argument('--self-test', action = 'store_true',
+						help = 'check the receiver and antenna against FM broadcast and '
+							   'recommend a gain. Run this first if nothing decodes')
+	parser.add_argument('--gain', type = float, default = None, metavar = 'DB',
+						help = 'override the gain in the config, 0 to 49.6 on an RTL-SDR')
+	parser.add_argument('--sightings', default = 'sightings.log', metavar = 'FILE',
+						help = 'file to append nearby radio sightings to, "" to disable')
 	parser.add_argument('--decode-scan', action = 'store_true',
 						help = 'sweep the strongest channels and report which carry P25 '
 							   'C4FM, to find a control channel worth decoding')
@@ -195,16 +202,19 @@ def run_decode(config, args) -> int:
 
 	spectrum = ZmqFrameSource(config.rf.n_channels)
 	symbols = SymbolSource()
+	fm = SymbolSource(FM_ENDPOINT)
 
 	try:
 		if args.decode_scan:
-			return scan_channels(config, radio, spectrum, symbols)
+			return scan_channels(config, radio, spectrum, symbols, fm_source = fm)
 
 		return run_diagnostic(config, radio, spectrum, symbols,
-							  pinned_channel = args.decode_channel)
+							  pinned_channel = args.decode_channel,
+							  sightings_file = args.sightings or None)
 	finally:
 		spectrum.close()
 		symbols.close()
+		fm.close()
 		radio.close()
 
 
@@ -218,6 +228,14 @@ def main(argv = None) -> int:
 		return 1
 
 	apply_tuning_offset(config, args)
+
+	if args.gain is not None:
+		config.rf.gain = args.gain
+
+	if args.self_test:
+		from .diagnostics import osmosdr_capture, run_self_test
+
+		return run_self_test(config, osmosdr_capture(config.rf.samp_rate))
 
 	if args.decode or args.decode_scan:
 		return run_decode(config, args)
