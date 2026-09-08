@@ -58,3 +58,47 @@ def add_noise(iq: np.ndarray, snr_db: float, rng = None) -> np.ndarray:
 def frame_dibits(payload_dibits) -> list[int]:
 	"""Prefix a payload with the frame sync, as every data unit is."""
 	return list(FRAME_SYNC_DIBIT_SEQUENCE) + [int(d) for d in payload_dibits]
+
+
+def root_raised_cosine(beta: float, span: int, sps: float) -> np.ndarray:
+	"""Pulse shaping filter, for generating linearly modulated test signals."""
+	n = np.arange(-span * sps, span * sps + 1) / sps
+
+	with np.errstate(divide = 'ignore', invalid = 'ignore'):
+		numerator = np.sin(np.pi * n * (1 - beta)) + 4 * beta * n * np.cos(np.pi * n * (1 + beta))
+		denominator = np.pi * n * (1 - (4 * beta * n) ** 2)
+		taps = numerator / denominator
+
+	taps[np.isclose(n, 0)] = 1 - beta + 4 * beta / np.pi
+
+	for singular in (1 / (4 * beta), -1 / (4 * beta)):
+		mask = np.isclose(n, singular)
+
+		if mask.any():
+			taps[mask] = beta / np.sqrt(2) * (
+				(1 + 2 / np.pi) * np.sin(np.pi / (4 * beta))
+				+ (1 - 2 / np.pi) * np.cos(np.pi / (4 * beta)))
+
+	return taps / np.sqrt(np.sum(taps ** 2))
+
+
+def modulate_qpsk(n_symbols: int, sample_rate: float, symbol_rate: float = 6000.0,
+				  beta: float = 0.2, rng = None) -> np.ndarray:
+	"""A pulse shaped QPSK signal, standing in for a P25 Phase 2 downlink.
+
+	The pulse shaping matters: a rectangular QPSK signal has an almost constant
+	envelope and so carries no envelope timing line, which would make a working
+	detector look broken.
+	"""
+	rng = np.random.default_rng() if rng is None else rng
+	sps = sample_rate / symbol_rate
+
+	symbols = np.exp(1j * (rng.integers(0, 4, n_symbols) * np.pi / 2 + np.pi / 4))
+	upsampled = np.zeros(int(n_symbols * sps), dtype = complex)
+	positions = (np.arange(n_symbols) * sps).astype(int)
+	usable = positions < upsampled.size
+	upsampled[positions[usable]] = symbols[: usable.sum()]
+
+	shaped = np.convolve(upsampled, root_raised_cosine(beta, 6, sps), mode = 'same')
+
+	return shaped.astype(np.complex64)

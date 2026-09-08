@@ -164,3 +164,47 @@ them against.
 Needs a real P25 signal. Either a better or higher antenna, a location closer to
 a site, a known-correct centre frequency for the local network, or an IQ
 recording of a working P25 system to replay through `tests/` fixtures.
+
+---
+
+# Session: unattended hunt (2026-09-08, second stint)
+
+## Confirmed from the public register
+RadioReference system 7679: RMR is **P25 Phase II**, VHF, downlink
+**163.6-168.2 MHz**, System ID 164, WACN BEE00, 130+ sites, run by Telstra.
+Documented control channels include 168.000 (Benalla), 166.5125 (Allambee),
+166.475 (Anabranch), 167.7625 (Apsley), 165.975 (Bendigo), 166.500 (Kinglake),
+166.575 (Pretty Sally).
+
+Two things follow. The config's `--base-station` window (165.2-168.4 MHz) sits
+almost exactly on the RMR downlink band, and every documented frequency lands
+on our 12.5 kHz channel grid. So the tuning and channelisation are right.
+
+## 168.0000 MHz is not the Benalla control channel
+It is the strongest carrier here and it sits on a documented RMR control channel
+frequency, so it was worth a close look. It is not P25:
+
+- occupied bandwidth **2.6 kHz** at -20 dB (P25 needs ~12.5 kHz)
+- present for ~5 s then drops 20 dB; a control channel is continuous
+- deviation 333-527 Hz, essentially unmodulated
+- x^4 line 234x, consistent with a near-pure carrier
+
+A narrowband local transmission that happens to share the frequency.
+
+## Searched and ruled out this stint
+- All 256 downlink channels for the **control channel shape** (8-18 kHz wide
+  AND >85% duty): 0 matches.
+- All 256 downlink channels for **linear modulation**: no 6000 Hz line in the
+  squared envelope, so no P25 Phase 2 H-DQPSK either. This was a real gap in the
+  detector, which until now only looked for FSK.
+- 163.6-165.2 MHz, the part of the RMR band the earlier captures missed,
+  captured at 164.4 MHz centre.
+- Uplink monitored with per-channel adaptive baselines: **0 bursts in 331 s**,
+  top channels only 1.5-2.7 dB over their own noise.
+
+## Monitor bug found and fixed
+v1 kept a burst open whenever the channel had been hot within the last 0.5 s, so
+a channel hovering at the threshold produced one fake burst hundreds of seconds
+long: it reported 171.8500 MHz at 76% duty when the channel was actually present
+in 0.3% of frames. v2 judges each channel against its own rolling 20th
+percentile and requires a burst to be hot for at least half its span.

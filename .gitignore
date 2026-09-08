@@ -8,3 +8,4 @@ __pycache__/
 *.cf32
 sightings.log
 .report.html
+.logs/
