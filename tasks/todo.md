@@ -242,3 +242,33 @@ the analysis channel grid exactly half a channel off the real one. Every real
 channel straddled two analysis channels and was clipped by the 6.25 kHz filter.
 The downlink and uplink captures happened to be centred on half-multiples and
 were correctly aligned; only this one was wrong. Rescanned with the grid fixed.
+
+## Burst-gated exhaustive scans (the last hole closed)
+
+The earlier exhaustive scans averaged across whole captures, which buries a
+bursty channel. Both bands were rescanned with per-channel burst gating:
+
+| band | channels | C4FM max | Phase2 max | classified P25 |
+|---|---|---|---|---|
+| downlink 165.2-168.4 | 256 | 3.20x | 3.59x | 0 |
+| uplink 169.7-172.9 | 256 | 3.10x | 3.63x | 0 |
+
+Detection needs 20x; real C4FM scores 50x and above. The only uplink channel
+showing any activity at all is 172.8000 MHz, which is the dongle's own crystal
+spur.
+
+Separately, the six busiest downlink channels were burst-classified over a full
+55 s window: 5-17 second transmissions, deviation 1631-2434 Hz, clock lines
+1.4-2.0x on both families. Burst lengths that long are voice.
+
+## Conclusion
+
+There is no receivable P25 signal at this location, of either phase, on any
+channel of the RMR band or anywhere else swept between 74 and 870 MHz. The band
+is busy, the receiver works, the tuning and channel grid are right, and every
+transmission in it is analogue.
+
+The uplink carries essentially nothing at all: 4 bursts against 1437 on the
+downlink. Since the goal is noticing radios *near the receiver*, and nearby
+radios would have to transmit on the uplink, that is the finding that matters
+most. Nothing is transmitting nearby.
