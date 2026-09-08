@@ -7,3 +7,4 @@ __pycache__/
 .captures/
 *.cf32
 sightings.log
+.report.html
