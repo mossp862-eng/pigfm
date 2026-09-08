@@ -17,6 +17,7 @@ from .dsp.channels import channel_powers
 SPECTRUM_ENDPOINT = 'tcp://127.0.0.1:5555'
 IQ_ENDPOINT = 'tcp://127.0.0.1:5556'
 SYMBOL_ENDPOINT = 'tcp://127.0.0.1:5557'
+FM_ENDPOINT = 'tcp://127.0.0.1:5558'
 
 # Poll interval when waiting on the radio. Short enough that the UI stays
 # responsive to keys, long enough not to spin the CPU.
@@ -183,6 +184,7 @@ class SymbolSource:
 	"""
 
 	def __init__(self, endpoint: str = SYMBOL_ENDPOINT):
+		self.endpoint = endpoint
 		self._context = zmq.Context.instance()
 		self._socket = self._context.socket(zmq.PULL)
 		self._socket.connect(endpoint)

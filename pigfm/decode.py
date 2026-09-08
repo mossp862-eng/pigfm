@@ -7,19 +7,22 @@ This is the part that turns "channel 172 is busy" into "talkgroup 1234, radio
 import time
 from collections import Counter
 from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
 
 from .config import Config
 from .dsp.noise_floor import NoiseFloorLeveller
 from .dsp.p25.constants import DUID_NAMES, DUID_TSDU, TSBK_ENCODED_DIBITS
 from .dsp.p25.framing import P25Framer
-from .dsp.p25.symbols import c4fm_quality
+from .dsp.p25.symbols import baud_line_strength, c4fm_quality
 from .dsp.p25.tsbk import decode_tsbk
 from .scanner import ChannelScanner
 
-# A channel scoring at least this on both measures is carrying C4FM. Noise sits
-# near 0.25 outer and 0.5 correlation, so these clear it comfortably.
-C4FM_OUTER_THRESHOLD = 0.40
-C4FM_SYNC_THRESHOLD = 0.75
+# A real C4FM signal puts a clock line at 4800 Hz tens to hundreds of times
+# above the surrounding spectrum. Measured: genuine C4FM scores about 330,
+# analogue FM about 3, noise about 1.5. Twenty is far outside anything a
+# non-keyed signal produces.
+C4FM_BAUD_THRESHOLD = 20.0
 
 # Symbol clock and framing take a moment to settle after the IQ tap moves, so
 # symbols arriving immediately after a retune are discarded rather than fed to
@@ -59,6 +62,48 @@ class ChannelStats:
 				f'TSBK {self.crc_pass}/{self.tsbks} CRC pass ({self.crc_rate * 100:.0f}%)')
 
 
+@dataclass
+class Sighting:
+	"""A radio heard near the receiver.
+
+	This is the point of the whole exercise: not mapping the network, but
+	noticing that a particular radio is close by, how strong it was, and when.
+	"""
+
+	when: datetime
+	channel: int
+	frequency: float
+	power_db: float
+	radio_id: int
+	talkgroup: int | None = None
+
+	def __str__(self) -> str:
+		group = f' talkgroup {self.talkgroup}' if self.talkgroup is not None else ''
+
+		return (f'{self.when:%H:%M:%S}  radio {self.radio_id}{group}  '
+				f'{self.power_db:+.1f}dB  ch {self.channel} '
+				f'({self.frequency / 1e6:.4f} MHz)')
+
+
+class SightingLog:
+	"""Append sightings to a file. A no-op when no filename is given."""
+
+	def __init__(self, filename: str | None):
+		self._file = Path(filename).open('a') if filename else None
+
+	def write(self, sighting: Sighting) -> None:
+		if self._file is None:
+			return
+
+		self._file.write(f'{sighting.when:%Y-%m-%d} {sighting}\n')
+		self._file.flush()
+
+	def close(self) -> None:
+		if self._file is not None:
+			self._file.close()
+			self._file = None
+
+
 class DecodeMonitor:
 	"""Follows channel activity and decodes P25 metadata from the IQ tap."""
 
@@ -77,6 +122,12 @@ class DecodeMonitor:
 
 		self.framer = P25Framer()
 		self.stats: dict[int, ChannelStats] = {}
+		self.sightings: list[Sighting] = []
+		self.radios: Counter = Counter()
+
+		# Most recent levelled power per channel, so a decoded identity can be
+		# reported with how strong that radio was when it transmitted.
+		self.power: dict[int, float] = {}
 
 		self.pinned = pinned_channel is not None
 		self.channel = pinned_channel if self.pinned else radio.decode_channel
@@ -120,7 +171,11 @@ class DecodeMonitor:
 		if frame is None:
 			return []
 
-		result = self.scanner.update(self.leveller.level(frame))
+		levelled = self.leveller.level(frame)
+		result = self.scanner.update(levelled)
+
+		if self.channel is not None and 0 <= self.channel < len(levelled):
+			self.power[self.channel] = float(levelled[self.channel])
 
 		if result.started:
 			# Newest event wins, as requested.
@@ -144,9 +199,28 @@ class DecodeMonitor:
 			stats.nacs[unit.nac] += 1
 
 			tsbks = self._decode_tsbks(unit, stats) if unit.duid == DUID_TSDU else []
+
+			for tsbk in tsbks:
+				self._note_sighting(tsbk)
+
 			decoded.append((unit, tsbks))
 
 		return decoded
+
+	def _note_sighting(self, tsbk) -> None:
+		if tsbk.radio_id is None:
+			return
+
+		sighting = Sighting(
+			when = datetime.now(),
+			channel = self.channel,
+			frequency = self.config.rf.channel_to_freq(self.channel),
+			power_db = self.power.get(self.channel, float('nan')),
+			radio_id = tsbk.radio_id,
+			talkgroup = tsbk.talkgroup)
+
+		self.sightings.append(sighting)
+		self.radios[tsbk.radio_id] += 1
 
 	def _decode_tsbks(self, unit, stats: ChannelStats) -> list:
 		tsbks = []
@@ -171,7 +245,8 @@ class DecodeMonitor:
 
 
 def run_diagnostic(config: Config, radio, spectrum_source, symbol_source,
-				   pinned_channel: int | None = None, summary_seconds: float = 10.0) -> int:
+				   pinned_channel: int | None = None, summary_seconds: float = 10.0,
+				   sightings_file: str | None = 'sightings.log') -> int:
 	"""Terminal decode mode. Prints identities as they arrive, and a periodic
 	per-channel summary so the control channel is easy to spot."""
 	monitor = DecodeMonitor(config, radio, spectrum_source, symbol_source, pinned_channel)
@@ -185,6 +260,8 @@ def run_diagnostic(config: Config, radio, spectrum_source, symbol_source,
 	print('Ctrl-C to stop.\n')
 
 	last_summary = time.monotonic()
+	seen_sightings = 0
+	log = SightingLog(sightings_file)
 
 	try:
 		while True:
@@ -200,6 +277,12 @@ def run_diagnostic(config: Config, radio, spectrum_source, symbol_source,
 				for tsbk in tsbks:
 					print(f'  {stamp}      -> {tsbk}')
 
+				for sighting in monitor.sightings[seen_sightings:]:
+					print(f'  * RADIO NEARBY  {sighting}')
+					log.write(sighting)
+
+				seen_sightings = len(monitor.sightings)
+
 			now = time.monotonic()
 
 			if now - last_summary >= summary_seconds:
@@ -210,22 +293,33 @@ def run_diagnostic(config: Config, radio, spectrum_source, symbol_source,
 					marker = '  <- control channel' if stats.looks_like_control else ''
 					print(f'  {describe(channel):<28} {stats.summary()}{marker}')
 
+				if monitor.radios:
+					print(f'  radios heard: ' + ', '.join(
+						f'{r} (x{n})' for r, n in monitor.radios.most_common(8)))
+
 				print()
 
 	except KeyboardInterrupt:
 		print('\nstopped')
 
+	finally:
+		log.close()
+
+	if monitor.radios:
+		print(f'\n{len(monitor.radios)} distinct radios heard, '
+			  f'{len(monitor.sightings)} sightings logged')
+
 	return 0
 
 
 def scan_channels(config: Config, radio, spectrum_source, symbol_source,
-				  n_channels: int = 10, dwell_seconds: float = 3.0,
+				  fm_source = None, n_channels: int = 12, dwell_seconds: float = 3.0,
 				  survey_seconds: float = 10.0) -> int:
 	"""Sweep the strongest channels and score each for P25 C4FM.
 
 	Finding the control channel is the hard part of using a trunking decoder,
-	and a strong carrier is not necessarily a P25 one. This says which is which
-	rather than leaving you to guess.
+	and a strong carrier is very often not a P25 one. This measures the symbol
+	clock line rather than guessing from signal strength.
 	"""
 	import numpy as np
 
@@ -233,9 +327,12 @@ def scan_channels(config: Config, radio, spectrum_source, symbol_source,
 
 	rf = config.rf
 	leveller = NoiseFloorLeveller(rf.n_channels)
+	quality_source = fm_source if fm_source is not None else symbol_source
+	rate = radio.actual_iq_rate if fm_source is not None else 4800.0
 
 	print(f'Surveying {rf.n_channels} channels around '
-		  f'{rf.tuned_freq / 1e6:.5f} MHz for {survey_seconds:.0f}s...')
+		  f'{rf.tuned_freq / 1e6:.5f} MHz for {survey_seconds:.0f}s '
+		  f'at gain {rf.gain:.0f}...')
 
 	peak = None
 	deadline = time.monotonic() + survey_seconds
@@ -247,17 +344,18 @@ def scan_channels(config: Config, radio, spectrum_source, symbol_source,
 			levelled = leveller.level(frame)
 			peak = levelled if peak is None else np.maximum(peak, levelled)
 
-		symbol_source.get_symbols(0)
+		quality_source.get_symbols(0)
 
 	if peak is None:
-		print('pigfm: no spectrum frames received', file = __import__('sys').stderr)
+		import sys
+		print('pigfm: no spectrum frames received', file = sys.stderr)
 		return 1
 
 	candidates = [int(c) for c in np.argsort(peak)[-n_channels:][::-1]]
 
-	print(f'\nTesting the {len(candidates)} strongest channels for C4FM '
-		  f'({dwell_seconds:.0f}s each)\n')
-	print(f'{"ch":>4} {"MHz":>11} {"peak dB":>8} {"4-level":>8} {"sync":>6} {"verdict":>14}')
+	print(f'\nTesting the {len(candidates)} strongest channels for a 4800 baud '
+		  f'clock line ({dwell_seconds:.0f}s each)\n')
+	print(f'{"ch":>4} {"MHz":>11} {"peak dB":>8} {"4800 Hz":>9} {"top line":>9} {"verdict":>12}')
 
 	found = []
 
@@ -265,7 +363,7 @@ def scan_channels(config: Config, radio, spectrum_source, symbol_source,
 		radio.set_decode_channel(channel)
 		time.sleep(RETUNE_SETTLE_SECONDS)
 
-		while symbol_source.get_symbols(0).size:
+		while quality_source.get_symbols(0).size:
 			spectrum_source.get_frame(0)
 
 		blocks = []
@@ -273,22 +371,22 @@ def scan_channels(config: Config, radio, spectrum_source, symbol_source,
 
 		while time.monotonic() < deadline:
 			spectrum_source.get_frame(0)
-			block = symbol_source.get_symbols(20)
+			block = quality_source.get_symbols(20)
 
 			if block.size:
 				blocks.append(block)
 
-		symbols = np.concatenate(blocks) if blocks else np.empty(0, dtype = np.float32)
-		outer, correlation = c4fm_quality(symbols)
+		samples = np.concatenate(blocks) if blocks else np.empty(0, dtype = np.float32)
+		strength, top = baud_line_strength(samples, rate)
 
-		is_c4fm = outer >= C4FM_OUTER_THRESHOLD and correlation >= C4FM_SYNC_THRESHOLD
-		verdict = 'P25 C4FM' if is_c4fm else ('no symbols' if symbols.size == 0 else 'not C4FM')
+		is_c4fm = strength >= C4FM_BAUD_THRESHOLD
+		verdict = 'P25 C4FM' if is_c4fm else ('no data' if samples.size == 0 else 'not C4FM')
 
 		if is_c4fm:
 			found.append(channel)
 
 		print(f'{channel:>4} {rf.channel_to_freq(channel) / 1e6:>11.4f} {peak[channel]:>8.1f} '
-			  f'{outer:>8.2f} {correlation:>6.2f} {verdict:>14}')
+			  f'{strength:>8.1f}x {top:>8.0f} {verdict:>12}')
 
 	print()
 
@@ -297,8 +395,9 @@ def scan_channels(config: Config, radio, spectrum_source, symbol_source,
 			f'channel {c} ({rf.channel_to_freq(c) / 1e6:.4f} MHz)' for c in found))
 		print(f'Decode it with:  --decode --decode-channel {found[0]}')
 	else:
-		print('No P25 C4FM found. The strong signals here are something else.')
-		print('Try --base-station (control channels are on the base downlink), a')
-		print('different centre_freq, or a better antenna.')
+		print('No 4800 baud clock line found, so nothing here is P25 C4FM.')
+		print('For reference, genuine C4FM scores around 330x, analogue FM around 3x.')
+		print('Try: a higher gain (--gain 45), --base-station, a different centre_freq,')
+		print('or --self-test to confirm the antenna is working.')
 
 	return 0

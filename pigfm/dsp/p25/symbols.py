@@ -136,3 +136,57 @@ def c4fm_quality(symbols: np.ndarray) -> tuple[float, float]:
 	correlation = sync_correlation(normalised)
 
 	return outer, float(correlation.max()) if correlation.size else 0.0
+
+
+def baud_line_strength(demodulated: np.ndarray, sample_rate: float,
+					   symbol_rate: float = 4800.0) -> tuple[float, float]:
+	"""Look for the symbol clock in a demodulated FSK signal.
+
+	Squaring the instantaneous frequency of any digitally keyed signal produces
+	a spectral line at its symbol rate. Returns (strength at symbol_rate as a
+	multiple of the median, frequency of the strongest line found).
+
+	This is far more reliable than judging the level histogram, which is what it
+	replaced: a C4FM signal shaped for a 12.5 kHz channel does not show four
+	clean peaks in a histogram of every sample, so a histogram cannot tell C4FM
+	from analogue FM. The clock line can.
+	"""
+	x = np.asarray(demodulated, dtype = np.float64)
+
+	if x.size < 4096:
+		return 0.0, 0.0
+
+	squared = x - x.mean()
+	squared = squared * squared
+	squared -= squared.mean()
+
+	size = 1 << int(np.floor(np.log2(squared.size)))
+	spectrum = np.abs(np.fft.rfft(squared[: size] * np.hanning(size)))
+	frequencies = np.fft.rfftfreq(size, 1 / sample_rate)
+
+	band = (frequencies > 800) & (frequencies < min(20000, sample_rate / 2))
+
+	if not band.any():
+		return 0.0, 0.0
+
+	target = int(np.argmin(np.abs(frequencies - symbol_rate)))
+	peak_lo, peak_hi = max(0, target - 4), target + 5
+
+	# Compare against the shoulders either side of the line rather than a median
+	# across the whole band. A wide median is wrecked by any filter stopband in
+	# the band, which inflates the ratio for every channel and makes noise look
+	# like a signal.
+	span = max(8, int(1500 / (frequencies[1] - frequencies[0])))
+	local = np.concatenate([
+		spectrum[max(0, peak_lo - span): peak_lo],
+		spectrum[peak_hi: peak_hi + span]])
+
+	if local.size == 0:
+		return 0.0, 0.0
+
+	baseline = float(np.median(local)) + 1e-20
+	strength = float(spectrum[peak_lo: peak_hi].max()) / baseline
+
+	strongest = int(np.argmax(spectrum[band]))
+
+	return strength, float(frequencies[band][strongest])

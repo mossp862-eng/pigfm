@@ -29,10 +29,14 @@ SHAPING_TRANSITION_RATIO = 0.5
 class C4fmDemod(gr.hier_block2):
 	def __init__(self, sample_rate: float, symbol_rate: int = SYMBOL_RATE,
 				 loop_bw: float = DEFAULT_LOOP_BW):
+		# Two outputs: recovered symbols, and the demodulated signal ahead of
+		# clock recovery. The second exists because signal quality has to be
+		# judged before symbol timing, not after: when clock recovery fails to
+		# lock, its output is noise and tells you nothing about the signal.
 		super().__init__(
 			'c4fm_demod',
 			gr.io_signature(1, 1, gr.sizeof_gr_complex),
-			gr.io_signature(1, 1, gr.sizeof_float))
+			gr.io_signature(2, 2, gr.sizeof_float))
 
 		self.sample_rate = sample_rate
 		self.symbol_rate = symbol_rate
@@ -57,4 +61,9 @@ class C4fmDemod(gr.hier_block2):
 			1.5,      # maximum deviation from nominal sps
 			1)        # one output sample per symbol
 
-		self.connect(self, self.demod, self.shaping, self.clock, self)
+		self.connect(self, self.demod, self.shaping, self.clock, (self, 0))
+
+		# Tapped before the shaping filter on purpose. That filter is a matched
+		# filter for the symbols and cuts everything above about 2.9 kHz, which
+		# empties the spectrum the clock line has to be measured against.
+		self.connect(self.demod, (self, 1))

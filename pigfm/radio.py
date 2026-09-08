@@ -19,7 +19,7 @@ import osmosdr
 
 from .config import RfConfig
 from .dsp.p25.demod import C4fmDemod
-from .frames import IQ_ENDPOINT, SPECTRUM_ENDPOINT, SYMBOL_ENDPOINT
+from .frames import FM_ENDPOINT, IQ_ENDPOINT, SPECTRUM_ENDPOINT, SYMBOL_ENDPOINT
 
 # Sample rate of the extracted channel. P25 C4FM runs at 4800 symbols/s, so this
 # is a little over ten samples per symbol, which is comfortable for timing
@@ -50,7 +50,8 @@ class Radio(gr.top_block):
 				 iq_endpoint: str = IQ_ENDPOINT, enable_iq: bool = False,
 				 iq_rate: int = IQ_RATE, keep_one_in_n: int = DEFAULT_KEEP_ONE_IN_N,
 				 decode_channel: int | None = None, device_args: str = '',
-				 enable_decode: bool = False, symbol_endpoint: str = SYMBOL_ENDPOINT):
+				 enable_decode: bool = False, symbol_endpoint: str = SYMBOL_ENDPOINT,
+				 fm_endpoint: str = FM_ENDPOINT):
 		super().__init__('pigfm_radio', catch_exceptions = True)
 
 		self.rf = rf
@@ -70,7 +71,8 @@ class Radio(gr.top_block):
 			channel = rf.n_channels // 2 if decode_channel is None else decode_channel
 			self._build_iq_branch(rf, iq_endpoint, iq_rate, channel,
 								  enable_iq = enable_iq, enable_decode = enable_decode,
-								  symbol_endpoint = symbol_endpoint)
+								  symbol_endpoint = symbol_endpoint,
+								  fm_endpoint = fm_endpoint)
 
 	def _build_spectrum_branch(self, rf: RfConfig, endpoint: str, keep_one_in_n: int) -> None:
 		"""Unchanged signal path. Do not alter without re-running the golden-master tests."""
@@ -90,7 +92,8 @@ class Radio(gr.top_block):
 
 	def _build_iq_branch(self, rf: RfConfig, endpoint: str, iq_rate: int, channel: int,
 						 enable_iq: bool = True, enable_decode: bool = False,
-						 symbol_endpoint: str = SYMBOL_ENDPOINT) -> None:
+						 symbol_endpoint: str = SYMBOL_ENDPOINT,
+						 fm_endpoint: str = FM_ENDPOINT) -> None:
 		"""Extract one 12.5 kHz channel as raw IQ, for the decoder to consume.
 
 		Decimation is split in two. A single stage from 3.2 MSPS straight down to
@@ -125,7 +128,13 @@ class Radio(gr.top_block):
 			self.demod = C4fmDemod(self.actual_iq_rate)
 			self.symbol_sink = zeromq.push_sink(gr.sizeof_float, 1, symbol_endpoint,
 												SINK_TIMEOUT_MS, False, -1, True)
-			self.connect(self.channel_filter, self.demod, self.symbol_sink)
+			# Port 1 is the demodulated signal ahead of clock recovery, which is
+			# what signal quality has to be measured on.
+			self.fm_sink = zeromq.push_sink(gr.sizeof_float, 1, fm_endpoint,
+											SINK_TIMEOUT_MS, False, -1, True)
+			self.connect(self.channel_filter, self.demod)
+			self.connect((self.demod, 0), self.symbol_sink)
+			self.connect((self.demod, 1), self.fm_sink)
 
 	@property
 	def iq_enabled(self) -> bool:
