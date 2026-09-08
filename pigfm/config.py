@@ -49,6 +49,20 @@ class RfConfig:
 		return self.centre_freq + self.tuning_offset
 
 	@property
+	def direction(self) -> str:
+		"""Which way the traffic on the tuned frequency is travelling.
+
+		config centre_freq is the mobile uplink, so tuned as configured we hear
+		radios transmitting; shifted down to the base station downlink we hear
+		the network transmitting. Nothing in a frame says which, and reading one
+		as the other pulls identities out of the wrong bits, so it has to come
+		from the tuning.
+		"""
+		from .dsp.p25.constants import INBOUND, OUTBOUND
+
+		return OUTBOUND if self.tuning_offset else INBOUND
+
+	@property
 	def base_station_offset(self) -> float:
 		"""Tuning offset that swaps the mobile uplink for the base downlink."""
 		return -self.duplex_offset

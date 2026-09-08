@@ -64,7 +64,14 @@ TSBK_CRC_BITS = 16
 TSBK_ENCODED_BITS = 196
 TSBK_ENCODED_DIBITS = TSBK_ENCODED_BITS // 2
 
-# TSBK opcodes that name a talkgroup and a radio.
+# Direction. The wire format is identical both ways, so nothing in a frame says
+# which it is: the frequency does. Opcode 0x2C is a registration *response* from
+# the base station and a registration *request* from a radio, and reading one as
+# the other pulls the identity out of the wrong bits.
+OUTBOUND = 'outbound'      # base station to radio, heard on the downlink
+INBOUND = 'inbound'        # radio to base station, heard on the uplink
+
+# Outbound (OSP) opcodes that name a talkgroup and a radio.
 TSBK_GRP_VCH_GRANT = 0x00
 TSBK_GRP_VCH_GRANT_UPDATE = 0x02
 TSBK_UU_VCH_GRANT = 0x04
@@ -80,3 +87,47 @@ TSBK_OPCODE_NAMES = {
 	TSBK_GRP_AFF_RSP: 'Group affiliation response',
 	TSBK_UNIT_REG_RSP: 'Unit registration response',
 }
+
+
+# Inbound (ISP) opcodes: what a radio transmits. These are the ones that matter
+# for noticing which radios are nearby, because a radio has to announce itself
+# to register, affiliate or ask for a channel.
+ISP_GRP_V_REQ = 0x00           # group voice service request
+ISP_UU_V_REQ = 0x04            # unit to unit voice service request
+ISP_UU_ANS_RSP = 0x05          # unit to unit answer response
+ISP_CALL_ALRT_REQ = 0x1E       # call alert request
+ISP_ACK_RSP_U = 0x1F           # acknowledge response
+ISP_CAN_SRV_REQ = 0x20         # cancel service request
+ISP_EMRG_ALRM_REQ = 0x23       # emergency alarm
+ISP_GRP_AFF_REQ = 0x24         # group affiliation request
+ISP_U_DEREG_REQ = 0x28         # unit de-registration request
+ISP_U_REG_REQ = 0x2C           # unit registration request
+ISP_LOC_REG_REQ = 0x2D         # location registration request
+
+ISP_OPCODE_NAMES = {
+	ISP_GRP_V_REQ: 'Group voice request',
+	ISP_UU_V_REQ: 'Unit to unit voice request',
+	ISP_UU_ANS_RSP: 'Unit to unit answer',
+	ISP_CALL_ALRT_REQ: 'Call alert request',
+	ISP_ACK_RSP_U: 'Acknowledge',
+	ISP_CAN_SRV_REQ: 'Cancel service request',
+	ISP_EMRG_ALRM_REQ: 'EMERGENCY ALARM',
+	ISP_GRP_AFF_REQ: 'Group affiliation request',
+	ISP_U_DEREG_REQ: 'Unit de-registration',
+	ISP_U_REG_REQ: 'Unit registration request',
+	ISP_LOC_REG_REQ: 'Location registration request',
+}
+
+# Inbound messages that also carry the talkgroup the radio is working with, in
+# the 16 bits immediately above the source address.
+ISP_CARRIES_GROUP = (ISP_GRP_V_REQ, ISP_EMRG_ALRM_REQ, ISP_GRP_AFF_REQ,
+					 ISP_LOC_REG_REQ)
+
+# Inbound messages addressed at another radio rather than a talkgroup.
+ISP_CARRIES_TARGET = (ISP_UU_V_REQ, ISP_UU_ANS_RSP, ISP_CALL_ALRT_REQ,
+					  ISP_ACK_RSP_U, ISP_CAN_SRV_REQ)
+
+# A radio announcing itself unprompted. These are the ones worth alerting on:
+# the radio is nearby and has just told the network so.
+ISP_ANNOUNCES_PRESENCE = (ISP_U_REG_REQ, ISP_LOC_REG_REQ, ISP_GRP_AFF_REQ,
+						  ISP_EMRG_ALRM_REQ)

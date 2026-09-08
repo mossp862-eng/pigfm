@@ -12,7 +12,8 @@ from pathlib import Path
 
 from .config import Config
 from .dsp.noise_floor import NoiseFloorLeveller
-from .dsp.p25.constants import DUID_NAMES, DUID_TSDU, TSBK_ENCODED_DIBITS
+from .dsp.p25.constants import (DUID_NAMES, DUID_TSDU, INBOUND,
+                                TSBK_ENCODED_DIBITS)
 from .dsp.p25.framing import P25Framer
 from .dsp.p25.detect import classify_bursts
 from .dsp.p25.symbols import baud_line_strength, c4fm_quality
@@ -77,13 +78,16 @@ class Sighting:
 	power_db: float
 	radio_id: int
 	talkgroup: int | None = None
+	what: str = ''
+	heard_directly: bool = False
 
 	def __str__(self) -> str:
 		group = f' talkgroup {self.talkgroup}' if self.talkgroup is not None else ''
+		what = f'  [{self.what}]' if self.what else ''
 
 		return (f'{self.when:%H:%M:%S}  radio {self.radio_id}{group}  '
 				f'{self.power_db:+.1f}dB  ch {self.channel} '
-				f'({self.frequency / 1e6:.4f} MHz)')
+				f'({self.frequency / 1e6:.4f} MHz){what}')
 
 
 class SightingLog:
@@ -130,6 +134,7 @@ class DecodeMonitor:
 		# reported with how strong that radio was when it transmitted.
 		self.power: dict[int, float] = {}
 
+		self.direction = config.rf.direction
 		self.pinned = pinned_channel is not None
 		self.channel = pinned_channel if self.pinned else radio.decode_channel
 		self._tuned_at = time.monotonic()
@@ -218,7 +223,10 @@ class DecodeMonitor:
 			frequency = self.config.rf.channel_to_freq(self.channel),
 			power_db = self.power.get(self.channel, float('nan')),
 			radio_id = tsbk.radio_id,
-			talkgroup = tsbk.talkgroup)
+			talkgroup = tsbk.talkgroup,
+			what = tsbk.opcode_name,
+			# Transmitted by the radio itself, so it is within range of here.
+			heard_directly = tsbk.announces_presence)
 
 		self.sightings.append(sighting)
 		self.radios[tsbk.radio_id] += 1
@@ -228,7 +236,8 @@ class DecodeMonitor:
 		payload = unit.payload
 
 		for start in range(0, len(payload) - TSBK_ENCODED_DIBITS + 1, TSBK_ENCODED_DIBITS):
-			tsbk = decode_tsbk(payload[start: start + TSBK_ENCODED_DIBITS])
+			tsbk = decode_tsbk(payload[start: start + TSBK_ENCODED_DIBITS],
+							   direction = self.direction)
 
 			if tsbk is None:
 				break
@@ -256,7 +265,11 @@ def run_diagnostic(config: Config, radio, spectrum_source, symbol_source,
 	def describe(channel: int) -> str:
 		return f'ch {channel} ({rf.channel_to_freq(channel) / 1e6:.4f} MHz)'
 
-	print(f'Decoding {describe(monitor.channel)}'
+	heading = ('uplink, listening for radios transmitting'
+			   if monitor.direction == INBOUND
+			   else 'downlink, listening to the network')
+
+	print(f'Decoding {describe(monitor.channel)}  [{heading}]'
 		  + ('  [pinned]' if monitor.pinned else '  [following activity]'))
 	print('Ctrl-C to stop.\n')
 
@@ -279,7 +292,8 @@ def run_diagnostic(config: Config, radio, spectrum_source, symbol_source,
 					print(f'  {stamp}      -> {tsbk}')
 
 				for sighting in monitor.sightings[seen_sightings:]:
-					print(f'  * RADIO NEARBY  {sighting}')
+					marker = 'RADIO NEARBY' if sighting.heard_directly else 'radio named'
+					print(f'  * {marker}  {sighting}')
 					log.write(sighting)
 
 				seen_sightings = len(monitor.sightings)

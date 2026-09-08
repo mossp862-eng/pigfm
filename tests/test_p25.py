@@ -329,3 +329,79 @@ def test_slicer_maps_levels_to_dibits():
 	symbols = np.array([3.0, 1.0, -1.0, -3.0], dtype = np.float32)
 
 	assert slice_dibits(symbols).tolist() == [0b01, 0b00, 0b10, 0b11]
+
+
+# --- inbound messages, what a radio transmits -------------------------------
+
+def test_a_registering_radio_is_identified():
+	"""The message that matters most for noticing a nearby radio: a unit
+	registration request is transmitted by the radio itself."""
+	from pigfm.dsp.p25.constants import INBOUND, ISP_U_REG_REQ
+
+	tsbk = decode_tsbk(encode_tsbk(ISP_U_REG_REQ, 0, 5551234), direction = INBOUND)
+
+	assert tsbk.crc_ok
+	assert tsbk.radio_id == 5551234
+	assert tsbk.announces_presence
+	assert 'registration' in tsbk.opcode_name.lower()
+
+
+def test_affiliation_carries_the_talkgroup_too():
+	from pigfm.dsp.p25.constants import INBOUND, ISP_GRP_AFF_REQ
+
+	arguments = (1234 << 24) | 5551234
+	tsbk = decode_tsbk(encode_tsbk(ISP_GRP_AFF_REQ, 0, arguments), direction = INBOUND)
+
+	assert tsbk.radio_id == 5551234
+	assert tsbk.talkgroup == 1234
+	assert tsbk.announces_presence
+
+
+def test_emergency_alarm_is_a_presence_announcement():
+	from pigfm.dsp.p25.constants import INBOUND, ISP_EMRG_ALRM_REQ
+
+	tsbk = decode_tsbk(encode_tsbk(ISP_EMRG_ALRM_REQ, 0, (77 << 24) | 42),
+					   direction = INBOUND)
+
+	assert tsbk.radio_id == 42
+	assert tsbk.talkgroup == 77
+	assert tsbk.announces_presence
+	assert 'EMERGENCY' in tsbk.opcode_name
+
+
+def test_unit_to_unit_request_names_both_radios():
+	from pigfm.dsp.p25.constants import INBOUND, ISP_UU_V_REQ
+
+	arguments = (777777 << 24) | 888888
+	tsbk = decode_tsbk(encode_tsbk(ISP_UU_V_REQ, 0, arguments), direction = INBOUND)
+
+	assert tsbk.radio_id == 888888
+	assert tsbk.target_id == 777777
+	# Directed at another radio, so it is not an unprompted announcement.
+	assert not tsbk.announces_presence
+
+
+def test_the_same_bits_mean_different_things_in_each_direction():
+	"""Nothing in a frame says which way it was travelling. Reading an inbound
+	registration request as its outbound namesake pulls the identity out of the
+	wrong bits, which is why direction is a parameter and not a guess."""
+	from pigfm.dsp.p25.constants import INBOUND, ISP_U_REG_REQ, OUTBOUND
+
+	dibits = encode_tsbk(ISP_U_REG_REQ, 0, 5551234)
+
+	inbound = decode_tsbk(dibits, direction = INBOUND)
+	outbound = decode_tsbk(dibits, direction = OUTBOUND)
+
+	assert inbound.crc_ok and outbound.crc_ok       # the frame is valid either way
+	assert inbound.radio_id == 5551234
+	assert outbound.radio_id is None                # no inbound layout applied
+	assert inbound.opcode_name != outbound.opcode_name
+
+
+def test_outbound_parsing_is_unchanged_by_the_inbound_work():
+	arguments = (0x100A << 40) | (1234 << 24) | 5551234
+	tsbk = decode_tsbk(encode_tsbk(TSBK_GRP_VCH_GRANT, 0, arguments))
+
+	assert tsbk.talkgroup == 1234
+	assert tsbk.radio_id == 5551234
+	assert not tsbk.announces_presence

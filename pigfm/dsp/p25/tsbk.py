@@ -12,7 +12,9 @@ from dataclasses import dataclass
 import numpy as np
 
 from . import trellis
-from .constants import (TSBK_BITS, TSBK_CRC_BITS, TSBK_ENCODED_DIBITS,
+from .constants import (INBOUND, ISP_ANNOUNCES_PRESENCE, ISP_CARRIES_GROUP,
+						ISP_CARRIES_TARGET, ISP_OPCODE_NAMES, ISP_U_REG_REQ,
+						OUTBOUND, TSBK_BITS, TSBK_CRC_BITS, TSBK_ENCODED_DIBITS,
 						TSBK_OPCODE_NAMES, TSBK_PAYLOAD_BITS,
 						TSBK_GRP_VCH_GRANT, TSBK_GRP_VCH_GRANT_UPDATE,
 						TSBK_UU_ANS_REQ, TSBK_UU_VCH_GRANT)
@@ -34,6 +36,8 @@ class Tsbk:
 	crc_ok: bool
 	path_metric: int
 
+	direction: str = OUTBOUND
+
 	talkgroup: int | None = None
 	radio_id: int | None = None
 	target_id: int | None = None
@@ -41,7 +45,19 @@ class Tsbk:
 
 	@property
 	def opcode_name(self) -> str:
-		return TSBK_OPCODE_NAMES.get(self.opcode, f'opcode 0x{self.opcode:02X}')
+		names = ISP_OPCODE_NAMES if self.direction == INBOUND else TSBK_OPCODE_NAMES
+
+		return names.get(self.opcode, f'opcode 0x{self.opcode:02X}')
+
+	@property
+	def announces_presence(self) -> bool:
+		"""A radio telling the network it is here, unprompted.
+
+		Registration, affiliation and emergency messages are transmitted by the
+		radio itself, so hearing one means that radio is within range of this
+		receiver, which is the whole point of watching the uplink.
+		"""
+		return self.direction == INBOUND and self.opcode in ISP_ANNOUNCES_PRESENCE
 
 	def __str__(self) -> str:
 		parts = [self.opcode_name]
@@ -58,8 +74,37 @@ class Tsbk:
 		return ', '.join(parts)
 
 
+def _parse_inbound(tsbk: Tsbk) -> None:
+	"""Pull identities out of an inbound message, one a radio transmitted.
+
+	Across the inbound messages the sending radio's address occupies the last 24
+	bits of the argument field, with the talkgroup, where the message carries
+	one, in the 16 bits immediately above it. That layout is from the standard's
+	conventions and, like the trellis table, has not been checked against live
+	traffic: a wrong layout here would report a plausible but wrong radio ID.
+	"""
+	args = tsbk.arguments
+
+	tsbk.radio_id = args & 0xFFFFFF
+
+	if tsbk.opcode in ISP_CARRIES_GROUP:
+		tsbk.talkgroup = (args >> 24) & 0xFFFF
+
+	elif tsbk.opcode in ISP_CARRIES_TARGET:
+		tsbk.target_id = (args >> 24) & 0xFFFFFF
+
+	elif tsbk.opcode == ISP_U_REG_REQ:
+		# Carries both the radio's own identity and the address it was assigned.
+		tsbk.target_id = None
+		tsbk.talkgroup = None
+
+
 def _parse_arguments(tsbk: Tsbk) -> None:
-	"""Pull identities out of the 64 argument bits, per opcode."""
+	"""Pull identities out of the 64 argument bits, per opcode and direction."""
+	if tsbk.direction == INBOUND:
+		_parse_inbound(tsbk)
+		return
+
 	args = tsbk.arguments
 
 	if tsbk.opcode in (TSBK_GRP_VCH_GRANT,):
@@ -80,7 +125,7 @@ def _parse_arguments(tsbk: Tsbk) -> None:
 		tsbk.radio_id = args & 0xFFFFFF
 
 
-def decode_tsbk(dibits) -> Tsbk | None:
+def decode_tsbk(dibits, direction: str = OUTBOUND) -> Tsbk | None:
 	"""Decode one 98 dibit trellis coded block into a TSBK.
 
 	Returns None if there are not enough dibits. A block that decodes but fails
@@ -109,7 +154,8 @@ def decode_tsbk(dibits) -> Tsbk | None:
 		mfid = bits_to_int(bits[8: 16]),
 		arguments = bits_to_int(bits[16: TSBK_PAYLOAD_BITS]),
 		crc_ok = crc16_ccitt(payload) == received_crc,
-		path_metric = metric)
+		path_metric = metric,
+		direction = direction)
 
 	_parse_arguments(tsbk)
 
