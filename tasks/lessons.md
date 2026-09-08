@@ -147,3 +147,41 @@ channel frequencies gave it away, by not landing on 12.5 kHz multiples.
 **How to apply:** print the frequencies a scan is actually examining and check
 them against the channel plan you are searching. Getting the right answer on two
 captures out of three by luck is not the same as being right.
+
+## A fix that removes noise can manufacture signal
+Caught: 2026-09-08, PiGFM uplink bring-up.
+
+Feeding the clock recovery noise stopped it locking onto any transmission that
+began after silence, which meant the decoder could never read a channel it had
+just retuned to. A power squelch fixed that outright. It also introduced a worse
+bug: the squelch outputs zeros when shut, the shaping filter rings down through
+them, and the symbol normaliser scaled that residue up by fifteen thousand.
+The framer then built frames out of amplified nothing at a dozen a second, all
+reading NAC 0x000, because an all-zero Network Identifier is itself a valid BCH
+codeword and decodes with zero corrected errors.
+
+**Why:** the normaliser's job is to scale whatever it is given to full
+amplitude. Given nothing, it scales nothing to full amplitude. Nothing in its
+own terms was wrong, and the failure appeared two stages downstream as
+confident, plausible frames.
+
+**How to apply:** any stage that divides by a measured level needs a floor below
+which it declines to act. And when a change makes a detector produce *more*
+output, check the new output is real before believing the change helped: this
+one looked like progress for several minutes.
+
+## Validity checks belong on every field the standard constrains
+Caught: 2026-09-08, PiGFM uplink bring-up.
+
+Watching a live analogue channel produced `NAC 0x882 unknown(0x6)` with eight
+corrected NID errors and no TSBK passing CRC. The BCH decoder always returns its
+nearest codeword, so noise correlating with the sync pattern still yields a
+confident NAC and DUID.
+
+**Why:** an error-correcting decoder never says "this is not a codeword". It
+says "the nearest codeword is this one", however far away it was.
+
+**How to apply:** check the decoded fields against what the standard permits.
+Nine of the sixteen DUID values do not exist, and rejecting them costs nothing
+and throws out most false frames. Report the corrected error count alongside the
+result so an implausible decode is visible rather than silently trusted.
