@@ -185,3 +185,51 @@ says "the nearest codeword is this one", however far away it was.
 Nine of the sixteen DUID values do not exist, and rejecting them costs nothing
 and throws out most false frames. Report the corrected error count alongside the
 result so an implausible decode is visible rather than silently trusted.
+
+## A per-channel baseline makes a continuous signal invisible
+Caught: 2026-09-09, hunting the Mt Alexander control channel.
+
+Every activity measure in this project compared a channel against its *own*
+recent floor. That is right for spotting bursts and exactly wrong for finding a
+control channel, which never stops transmitting: it raises its own baseline, so
+it scores zero excess and zero duty, and gets ranked below noise.
+
+166.4875 MHz was the strongest continuous carrier in the band, 22.5 dB over the
+band floor with a 3.7 dB spread over time, and it was invisible to every scan
+run for two days. Only comparing against the *band* floor revealed it, along
+with four more continuous carriers.
+
+**Why:** the metric was designed for the original purpose, noticing a portable
+keying up. Nobody asked whether it could see the opposite kind of signal.
+
+**How to apply:** measure against the band floor as well as the channel's own,
+and report the two separately. A channel with a high mean and a small spread is
+continuous; a channel with a high spread is bursty. Both matter and one metric
+cannot show both.
+
+## Burst gating destroys a continuous signal
+Caught: 2026-09-09, same session.
+
+`classify_bursts` selects samples above the channel's own floor. On a channel
+that transmits without pause, that selects the few percent of samples that
+happen to sit above an already-elevated floor, which is noise and edges rather
+than signal. The control channel was analysed this way repeatedly and reported
+as noise-like.
+
+**How to apply:** check whether the channel is continuous *before* gating, and
+skip the gate when it is. Gating is for bursty channels only.
+
+## Check how full the ADC is before trusting any signal analysis
+Caught: 2026-09-09, same session.
+
+At gain 20 the receiver's 8-bit ADC was 1.2% full, leaving roughly two effective
+bits. Every measurement taken there was quantisation noise as much as signal.
+At gain 49.6 it reached 36% with no clipping at any setting.
+
+**Why:** gain was being chosen by SNR alone, which plateaus long before the ADC
+is properly driven, so the number looked fine while the fine structure of the
+signal was being destroyed.
+
+**How to apply:** report peak |I|,|Q| alongside SNR. Tens of percent is healthy;
+a couple of percent means the analysis is running on quantisation noise however
+good the SNR looks.
