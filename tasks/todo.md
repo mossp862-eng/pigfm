@@ -272,3 +272,26 @@ The uplink carries essentially nothing at all: 4 bursts against 1437 on the
 downlink. Since the goal is noticing radios *near the receiver*, and nearby
 radios would have to transmit on the uplink, that is the finding that matters
 most. Nothing is transmitting nearby.
+
+## Final pass: full-length burst-gated scan
+
+The 30 s gated scan risked missing bursts that fell later in the capture, so the
+downlink was rescanned across the full 60 s:
+
+- C4FM column: median 1.81x, **max 3.31x**
+- Phase2 column: median 1.86x, **max 3.47x**
+- channels classified as P25: **0**
+
+That is the last hole closed. Every channel of both bands has now been examined
+with long integration and with burst gating, in both modulation families.
+
+## Shipped this stint
+- `detect.py`: classify() tests both P25 families; classify_bursts() judges a
+  channel on its transmissions
+- `watch.py`: `--watch`, activity logging against per-channel adaptive
+  baselines, verified live (7 transmissions in 100 s on the RMR downlink)
+- `--decode-scan` rewritten to classify from raw IQ, 8 s dwell, reports the
+  active fraction and both clock lines
+- Flowgraph: sink timeout 100 ms -> 20 ms, FM tap opt-in, scan builds only the
+  branch it reads
+- 84 tests (was 66)
