@@ -203,9 +203,14 @@ def run_watch_mode(config, args) -> int:
 			config.rf.n_channels, seed = args.seed,
 			frame_interval = nominal_frame_interval(config.rf))
 	else:
-		from .radio import Radio
+		from .radio import Radio, RadioBusyError
 
-		radio = Radio(config.rf, device_args = args.device_args)
+		try:
+			radio = Radio(config.rf, device_args = args.device_args)
+		except RadioBusyError as exc:
+			print(f'pigfm: {exc}', file = sys.stderr)
+			return 1
+
 		radio.start()
 		source = ZmqFrameSource(config.rf.n_channels)
 
@@ -227,7 +232,7 @@ def run_decode(config, args) -> int:
 		return 1
 
 	from .decode import run_diagnostic, scan_channels
-	from .radio import Radio
+	from .radio import Radio, RadioBusyError
 
 	channel = args.decode_channel if args.decode_channel is not None else args.iq_channel
 
@@ -236,9 +241,14 @@ def run_decode(config, args) -> int:
 	# and makes the receiver overrun.
 	scanning = args.decode_scan
 
-	radio = Radio(config.rf, enable_iq = args.iq or scanning,
-				  enable_decode = not scanning, decode_channel = channel,
-				  device_args = args.device_args)
+	try:
+		radio = Radio(config.rf, enable_iq = args.iq or scanning,
+					  enable_decode = not scanning, decode_channel = channel,
+					  device_args = args.device_args)
+	except RadioBusyError as exc:
+		print(f'pigfm: {exc}', file = sys.stderr)
+		return 1
+
 	radio.start()
 
 	spectrum = ZmqFrameSource(config.rf.n_channels)
@@ -297,10 +307,15 @@ def main(argv = None) -> int:
 		# Built and started before curses takes the terminal, so GNURadio's
 		# startup chatter lands on a normal screen. The original started it with
 		# curses already active and had to suspend and restore the terminal.
-		from .radio import Radio
+		from .radio import Radio, RadioBusyError
 
-		radio = Radio(config.rf, enable_iq = args.iq, decode_channel = args.iq_channel,
-					  device_args = args.device_args)
+		try:
+			radio = Radio(config.rf, enable_iq = args.iq, decode_channel = args.iq_channel,
+						  device_args = args.device_args)
+		except RadioBusyError as exc:
+			print(f'pigfm: {exc}', file = sys.stderr)
+			return 1
+
 		radio.start()
 		source = ZmqFrameSource(config.rf.n_channels)
 

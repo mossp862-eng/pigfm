@@ -144,3 +144,10 @@ def test_burst_log_writes_lines(tmp_path = None):
 	assert written >= 1
 	assert path.read_text().count('\n') == written
 	assert 'MHz' in path.read_text()
+
+
+def test_radio_busy_error_is_a_runtime_error():
+	"""Callers that only know about RuntimeError still behave sensibly."""
+	from pigfm.radio import RadioBusyError
+
+	assert issubclass(RadioBusyError, RuntimeError)
