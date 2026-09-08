@@ -146,6 +146,14 @@ def parse_args(argv = None):
 	parser.add_argument('--decode', action = 'store_true',
 						help = 'decode P25 metadata (talkgroup and radio IDs) and print '
 							   'it to the terminal instead of running the spectrum display')
+	parser.add_argument('--watch', action = 'store_true',
+						help = 'log every transmission heard, with time, channel, duration and '
+							   'strength. Works on any signal, not only P25')
+	parser.add_argument('--watch-margin', type = float, default = 10.0, metavar = 'DB',
+						help = 'how far above its own noise floor a channel must rise to count '
+							   'as transmitting (default 10)')
+	parser.add_argument('--activity-log', default = 'activity.log', metavar = 'FILE',
+						help = 'file to append transmissions to, "" to disable')
 	parser.add_argument('--self-test', action = 'store_true',
 						help = 'check the receiver and antenna against FM broadcast and '
 							   'recommend a gain. Run this first if nothing decodes')
@@ -182,6 +190,33 @@ def apply_tuning_offset(config, args) -> None:
 
 	elif args.tuning_offset:
 		config.rf.tuning_offset = args.tuning_offset
+
+
+def run_watch_mode(config, args) -> int:
+	"""Activity logging. Works with a receiver or with fabricated traffic."""
+	from .watch import run_watch
+
+	radio = None
+
+	if args.synthetic:
+		source: FrameSource = SyntheticFrameSource(
+			config.rf.n_channels, seed = args.seed,
+			frame_interval = nominal_frame_interval(config.rf))
+	else:
+		from .radio import Radio
+
+		radio = Radio(config.rf, device_args = args.device_args)
+		radio.start()
+		source = ZmqFrameSource(config.rf.n_channels)
+
+	try:
+		return run_watch(config, source, log_file = args.activity_log or None,
+						 margin_db = args.watch_margin)
+	finally:
+		source.close()
+
+		if radio is not None:
+			radio.close()
 
 
 def run_decode(config, args) -> int:
@@ -245,6 +280,9 @@ def main(argv = None) -> int:
 		from .diagnostics import osmosdr_capture, run_self_test
 
 		return run_self_test(config, osmosdr_capture(config.rf.samp_rate))
+
+	if args.watch:
+		return run_watch_mode(config, args)
 
 	if args.decode or args.decode_scan:
 		return run_decode(config, args)

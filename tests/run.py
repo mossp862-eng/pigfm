@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT))
 
 MODULES = ['tests.test_golden', 'tests.test_config', 'tests.test_scanner', 'tests.test_frequency',
            'tests.test_tuning', 'tests.test_p25', 'tests.test_p25_rf',
-           'tests.test_diagnostics', 'tests.test_detect']
+           'tests.test_diagnostics', 'tests.test_detect', 'tests.test_watch']
 
 
 def main() -> int:
