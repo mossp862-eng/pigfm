@@ -154,16 +154,27 @@ class DecodeMonitor:
 	# --- channel following --------------------------------------------------
 
 	def _consider(self, channel: int) -> bool:
-		"""Retune to a newly active channel, unless pinned or too soon."""
+		"""Retune to a newly active channel, unless pinned or already busy.
+
+		The hold exists to stop a busy system making the tap hop between live
+		channels and finish none of them. It has no business keeping the tap on
+		a channel where nothing is happening, which is what it was doing: parked
+		on the band centre, it watched channels go active and stayed put.
+		"""
 		if self.pinned or channel == self.channel:
 			return False
 
-		if time.monotonic() - self._tuned_at < CHANNEL_HOLD_SECONDS:
+		if self._current_channel_busy() and \
+				time.monotonic() - self._tuned_at < CHANNEL_HOLD_SECONDS:
 			return False
 
 		self.retune(channel)
 
 		return True
+
+	def _current_channel_busy(self) -> bool:
+		"""Is there a transmission in progress on the channel being decoded?"""
+		return any(event.channel == self.channel for event in self.scanner.active_events)
 
 	def retune(self, channel: int) -> None:
 		self.radio.set_decode_channel(channel)
