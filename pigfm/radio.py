@@ -51,6 +51,29 @@ DEFAULT_KEEP_ONE_IN_N = 128
 SINK_TIMEOUT_MS = 20
 
 
+class RadioBusyError(RuntimeError):
+	"""Another PiGFM already holds the ports this one needs."""
+
+
+def _push_sink(item_size: int, vlen: int, endpoint: str, what: str):
+	"""Bind a ZMQ sink, turning the bind failure into something readable.
+
+	GNURadio reports a clash as a bare RuntimeError('Address already in use')
+	from deep inside flowgraph construction, which is a poor thing to show
+	someone whose only mistake was leaving another copy running.
+	"""
+	try:
+		return zeromq.push_sink(item_size, vlen, endpoint, SINK_TIMEOUT_MS, False, -1, True)
+	except RuntimeError as exc:
+		if 'in use' not in str(exc).lower():
+			raise
+
+		raise RadioBusyError(
+			f'{endpoint} is already taken, so the {what} cannot start.\n'
+			'Another copy of PiGFM is running. Close it and try again '
+			'(check with: pgrep -af pigfm).') from None
+
+
 class Radio(gr.top_block):
 	def __init__(self, rf: RfConfig, spectrum_endpoint: str = SPECTRUM_ENDPOINT,
 				 iq_endpoint: str = IQ_ENDPOINT, enable_iq: bool = False,
@@ -90,8 +113,7 @@ class Radio(gr.top_block):
 		self.averager = gr_filter.single_pole_iir_filter_ff(rf.iir_alpha, fft_size)
 		self.decimator = blocks.keep_one_in_n(gr.sizeof_float * fft_size, keep_one_in_n)
 		self.to_db = blocks.nlog10_ff(10, fft_size, 0)
-		self.spectrum_sink = zeromq.push_sink(gr.sizeof_float, fft_size, endpoint,
-											  SINK_TIMEOUT_MS, False, -1, True)
+		self.spectrum_sink = _push_sink(gr.sizeof_float, fft_size, endpoint, 'spectrum display')
 
 		self.connect(self.source, self.to_vector, self.fft, self.mag_squared,
 					 self.averager, self.decimator, self.to_db, self.spectrum_sink)
@@ -124,16 +146,14 @@ class Radio(gr.top_block):
 		self.actual_iq_rate = intermediate_rate / fine_decim
 
 		if enable_iq:
-			self.iq_sink = zeromq.push_sink(gr.sizeof_gr_complex, 1, endpoint,
-											SINK_TIMEOUT_MS, False, -1, True)
+			self.iq_sink = _push_sink(gr.sizeof_gr_complex, 1, endpoint, 'IQ tap')
 			self.connect(self.channel_filter, self.iq_sink)
 
 		if enable_decode:
 			# C4FM demodulation and symbol recovery run here, in C++. What
 			# reaches Python is 4800 symbols per second, which is nothing.
 			self.demod = C4fmDemod(self.actual_iq_rate)
-			self.symbol_sink = zeromq.push_sink(gr.sizeof_float, 1, symbol_endpoint,
-												SINK_TIMEOUT_MS, False, -1, True)
+			self.symbol_sink = _push_sink(gr.sizeof_float, 1, symbol_endpoint, 'decoder')
 			self.connect(self.channel_filter, self.demod)
 			self.connect((self.demod, 0), self.symbol_sink)
 
@@ -141,8 +161,7 @@ class Radio(gr.top_block):
 			# published when something is going to read it: a sink nobody drains
 			# throttles the whole flowgraph.
 			if enable_fm:
-				self.fm_sink = zeromq.push_sink(gr.sizeof_float, 1, fm_endpoint,
-												SINK_TIMEOUT_MS, False, -1, True)
+				self.fm_sink = _push_sink(gr.sizeof_float, 1, fm_endpoint, 'demodulator tap')
 				self.connect((self.demod, 1), self.fm_sink)
 			else:
 				self.fm_null = blocks.null_sink(gr.sizeof_float)
