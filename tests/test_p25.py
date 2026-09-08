@@ -405,3 +405,27 @@ def test_outbound_parsing_is_unchanged_by_the_inbound_work():
 	assert tsbk.talkgroup == 1234
 	assert tsbk.radio_id == 5551234
 	assert not tsbk.announces_presence
+
+
+def test_a_frame_with_an_impossible_duid_is_rejected():
+	"""The BCH decoder always returns its nearest codeword, so noise that
+	happens to correlate with the sync pattern still produces a confident
+	looking NAC and DUID. Nine of the sixteen DUID values do not exist, which
+	is what catches most of those.
+	"""
+	from pigfm.dsp.p25.constants import DUID_NAMES
+	from pigfm.dsp.p25.framing import P25Framer, encode_nid
+
+	for duid in range(16):
+		nid = encode_nid(0x293, duid)
+		dibits = list(FRAME_SYNC_DIBIT_SEQUENCE)
+		dibits += list(bits_to_dibits(np.array(int_to_bits(nid, NID_BITS), dtype = np.uint8)))
+		dibits += [0] * 300
+
+		framer = P25Framer(normalise = False)
+		units = framer.feed(_symbols_for(dibits)) + framer.flush()
+
+		if duid in DUID_NAMES:
+			assert len(units) == 1, f'DUID 0x{duid:X} is real and must be accepted'
+		else:
+			assert units == [], f'DUID 0x{duid:X} does not exist and must be rejected'

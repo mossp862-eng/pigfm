@@ -20,8 +20,10 @@ MAX_PAYLOAD_DIBITS = TSBK_ENCODED_DIBITS * 3
 
 # Beyond this many corrected bit errors the NID is not trusted. The code can
 # correct 11, but a word needing that many is usually noise landing on a valid
-# codeword rather than a real frame.
-MAX_NID_BIT_ERRORS = 8
+# codeword rather than a real frame. Measured against a live analogue signal,
+# eight let a false frame through roughly once a minute; a real frame at a
+# workable SNR needs far fewer than five.
+MAX_NID_BIT_ERRORS = 5
 
 
 def encode_nid(nac: int, duid: int) -> int:
@@ -157,6 +159,15 @@ class P25Framer:
 		nac, duid, errors = decode_nid(nid)
 
 		if errors > self.max_nid_bit_errors:
+			return None
+
+		# The standard defines seven data unit types. Any other value means the
+		# NID was decoded wrongly, whatever the error count claims: the BCH
+		# decoder always returns its nearest codeword, so noise that correlates
+		# with the sync pattern still yields a confident looking NAC and DUID.
+		# Nine of the sixteen possible values are impossible, so this alone
+		# rejects most of them.
+		if duid not in DUID_NAMES:
 			return None
 
 		payload = slice_dibits(self._buffer[nid_start + NID_DIBITS: payload_end])
