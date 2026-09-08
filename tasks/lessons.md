@@ -80,3 +80,70 @@ declared P25. The tool was confidently wrong on all twelve channels.
 median that may span a filter response. And when a tool reports a positive on
 every input, treat that as a failure of the tool, not a discovery. Print the
 supporting number next to the verdict so the contradiction is visible.
+
+## Test for the modulation family you are actually looking for
+Caught: 2026-09-08, PiGFM P25 hunt.
+
+The C4FM detector only examined the instantaneous frequency. RMR is a P25
+Phase II system, and a Phase 2 downlink is H-DQPSK: linearly modulated, so its
+symbol clock is in the envelope and its instantaneous frequency looks like
+noise. Hours were spent concluding "no P25 here" with a detector that was
+structurally incapable of seeing half of P25.
+
+**Why:** "no signal" and "signal my detector cannot see" produce identical
+output. A negative result is only as strong as the detector's coverage, and the
+detector's blind spots are invisible in its own results.
+
+**How to apply:** before trusting a negative, write down what the detector
+would fail to see and check that list against the thing you are looking for.
+`detect.classify` now tests both families, and the test suite asserts that each
+family is invisible to the other test, so the blind spot cannot come back.
+
+## Average over a burst and you average it away
+Caught: 2026-09-08, PiGFM P25 hunt.
+
+The exhaustive channel scans integrated over whole captures including the
+silence. Measured on a synthetic C4FM burst surrounded by six times its length
+of quiet: **1.9x ungated, 41x gated**. A bursty traffic channel could have been
+sitting in front of the scan the whole time.
+
+**Why:** integrating longer feels like it can only help sensitivity. It does for
+a continuous signal, and it actively destroys a bursty one, because the noise
+you add grows while the signal does not.
+
+**How to apply:** gate on the envelope and judge a channel on the samples where
+it is transmitting. Watch the constant-envelope case: FM has a flat envelope by
+definition, so a continuously keyed channel has no bursts to find and must fall
+back to the whole span rather than reporting nothing.
+
+## Every ZMQ sink you build must be drained
+Caught: 2026-09-08, PiGFM P25 hunt.
+
+A GNURadio ZMQ sink applies backpressure to the whole flowgraph while it waits
+on its send timeout. `--decode-scan` built the demodulator but read only the IQ
+sink, so the unread symbol and FM sinks stalled the graph, the receiver overran
+continuously, and nine of twelve channels reported "no data". The same mistake
+produced unexplained overruns in a diagnostic earlier the same day.
+
+**Why:** an unused branch looks free. It is not: it throttles the branches that
+are in use, and the symptom appears somewhere else entirely.
+
+**How to apply:** build only the branches you intend to consume, and keep the
+sink timeout short so an idle one costs throughput rather than wedging the
+graph.
+
+## Check the analysis grid against the signal's grid
+Caught: 2026-09-08, PiGFM P25 hunt.
+
+The capture of the lower RMR band was centred on an exact 12.5 kHz multiple,
+which put the analysis channel grid exactly half a channel off the real one.
+Every real channel straddled two analysis channels and was clipped by the
+6.25 kHz filter. The other two captures happened to be centred on half-multiples
+and were aligned correctly, which is why the error stayed hidden.
+
+**Why:** the scan produced plausible-looking output either way. Only the printed
+channel frequencies gave it away, by not landing on 12.5 kHz multiples.
+
+**How to apply:** print the frequencies a scan is actually examining and check
+them against the channel plan you are searching. Getting the right answer on two
+captures out of three by luck is not the same as being right.
