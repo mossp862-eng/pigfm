@@ -124,3 +124,43 @@ still unproven. Round trip tests encode and decode with the same table, so they
 pass either way. Only live traffic with passing CRCs confirms them. If a real
 system is found and sync and NAC look stable while CRCs fail, those two
 constants are the first suspects.
+
+---
+
+# Session: P25 live bring-up (2026-09-08)
+
+## Outcome: no P25 signal receivable at this site. Decoder unproven on air.
+
+## What was measured
+- **Receiver gain was the blocker.** Config `gain = 20` heard FM broadcast at
+  30.5 dB / 25 strong bins; gain 40 heard 45.2 dB / 344 bins. Everything
+  measured before this was near the noise floor.
+- 172.8000 MHz and 158.4000 MHz are 6x and 5.5x the dongle's 28.8 MHz crystal:
+  internal spurs, not transmissions.
+- All 256 downlink channels, at gain 20 and gain 45, with a correct 12.5 kHz
+  channel filter: **no 4800 baud clock line anywhere**.
+- Duplex offsets tried: 4.50, 4.55, 4.60, 4.65 MHz. Nothing.
+- Wideband sweep, 74-870 MHz in 58 steps at gain 45: 8 narrowband carriers,
+  every one tested and none 4-level FSK at 2400, 4800 or 9600 baud.
+- The strongest carriers deviate 333-527 Hz, essentially unmodulated.
+- A P25 Phase 2 system still carries a Phase 1 C4FM control channel, so its
+  absence rules out Phase 2 here as well.
+
+## Shipped from this session
+- [x] `--self-test`: FM broadcast reference check and gain recommendation
+- [x] `baud_line_strength`: measures the symbol clock line. C4FM ~50x+,
+      analogue FM ~2x, noise ~1.5x. Replaced a level-histogram heuristic that
+      could not tell C4FM from analogue FM.
+- [x] FM tap in `C4fmDemod`, ahead of the matched filter, for quality measurement
+- [x] `Sighting` / `SightingLog`: radio ID with power and time, to `sightings.log`
+- [x] `--gain` override, `--sightings`
+- [x] 8 new tests (66 total)
+
+## Still unproven
+The trellis table and interleaver stride, as before. No live traffic to confirm
+them against.
+
+## Next
+Needs a real P25 signal. Either a better or higher antenna, a location closer to
+a site, a known-correct centre frequency for the local network, or an IQ
+recording of a working P25 system to replay through `tests/` fixtures.

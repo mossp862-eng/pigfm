@@ -101,12 +101,33 @@ numbers refer to different frequencies then and an ignore list built while
 listening to the base stations would suppress unrelated channels on your next
 normal run.
 
+### If PiGFM does not seem to hear anything
+Run the self test first:
+
+`./pigfm.py --self-test config/rmr.ini`
+
+It tunes to the FM broadcast band, which is the loudest signal in the spectrum
+almost anywhere, and reports how far above the noise it is at a range of gains.
+That separates three things which otherwise look identical: a broken or
+disconnected antenna, a gain that is too low, and a band that genuinely has
+nothing on it.
+
+Gain matters more than you might expect. On the machine this was developed
+against, the shipped `gain = 20` heard FM broadcast 30dB above the noise, while
+`gain = 40` heard it at 45dB and picked out fourteen times as many signals. If
+the self test recommends a different gain, set it in the `[rf]` section or pass
+`--gain`.
+
 ### Decoding who is transmitting
 P25 systems send the radio ID and the talkgroup ID **unencrypted, even on
 encrypted systems**. PiGFM can decode them.
 
-First find a control channel. A strong signal is not necessarily a P25 one, so
-PiGFM will tell you which is which:
+First find a control channel. **A strong signal is very often not a P25 one**,
+and you cannot tell by looking at a spectrum display. PiGFM measures it properly:
+any signal keyed at a symbol rate puts a spectral line at that rate, so PiGFM
+looks for a line at P25's 4800 symbols per second. Genuine C4FM scores tens to
+hundreds of times above the surrounding spectrum; analogue FM and noise score
+about 2. Nothing else distinguishes them reliably.
 
 `./pigfm.py --decode-scan --base-station config/rmr.ini`
 
@@ -118,8 +139,14 @@ Then decode it:
 
 `./pigfm.py --decode --base-station --decode-channel 42 config/rmr.ini`
 
-Identities are printed as they arrive, with a periodic per channel summary that
-marks the control channel. Without `--decode-channel` the decoder follows
+Radios heard near the receiver are printed as they arrive, with the time, the
+channel, how strong that radio was, and its ID, and appended to `sightings.log`:
+
+```
+* RADIO NEARBY  14:22:07  radio 5551234 talkgroup 1234  -6.2dB  ch 42 (170.2250 MHz)
+```
+
+There is also a periodic per channel summary that marks the control channel. Without `--decode-channel` the decoder follows
 whichever channel most recently became active, which is useful for watching
 traffic but will often land on a voice channel. Voice channels carry their
 identities in link control, which PiGFM does not decode yet, so pin the control
