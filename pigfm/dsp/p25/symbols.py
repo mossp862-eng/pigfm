@@ -70,8 +70,14 @@ class SymbolNormaliser:
 	decision is biased.
 	"""
 
-	def __init__(self, alpha: float = 0.02, initial_scale: float = 1.0):
+	# How far a block's own estimate may differ from the running one before the
+	# running one is abandoned rather than crawled towards.
+	SNAP_RATIO = 2.5
+
+	def __init__(self, alpha: float = 0.02, initial_scale: float = 1.0,
+				 snap_ratio: float = SNAP_RATIO):
 		self.alpha = alpha
+		self.snap_ratio = snap_ratio
 		self.offset = 0.0
 		self.scale = initial_scale
 		self._started = False
@@ -90,12 +96,24 @@ class SymbolNormaliser:
 		# would be dragged around by noise spikes.
 		block_scale = float(np.percentile(np.abs(symbols - block_offset), 95))
 
-		if not self._started:
-			self.offset, self.scale = block_offset, max(block_scale, 1e-6)
+		block_scale = max(block_scale, 1e-6)
+
+		# Crawling at a couple of percent a block is right for tracking a signal
+		# that is already there, and wrong for arriving at one. After the tap
+		# retunes, the first thing it sees is noise, whose spread is nothing like
+		# a signal's; adapting slowly away from that estimate left every symbol
+		# scaled to near zero and the frame sync unfindable for seconds. When a
+		# block disagrees with the running estimate by this much, the running
+		# estimate is about something else entirely, so it is replaced.
+		changed = (block_scale > self.scale * self.snap_ratio
+				   or block_scale * self.snap_ratio < self.scale)
+
+		if not self._started or changed:
+			self.offset, self.scale = block_offset, block_scale
 			self._started = True
 		else:
 			self.offset += self.alpha * (block_offset - self.offset)
-			self.scale += self.alpha * (max(block_scale, 1e-6) - self.scale)
+			self.scale += self.alpha * (block_scale - self.scale)
 
 		return (symbols - self.offset) * (3.0 / self.scale)
 

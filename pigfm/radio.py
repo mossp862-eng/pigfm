@@ -11,7 +11,9 @@ The spectrum branch is unchanged from the original. The IQ branch is new: the
 original discarded raw IQ entirely, and P25 metadata decode needs it.
 """
 
-from gnuradio import blocks, fft, filter as gr_filter, gr, zeromq
+import math
+
+from gnuradio import analog, blocks, fft, filter as gr_filter, gr, zeromq
 from gnuradio.fft import window
 from gnuradio.filter import firdes
 
@@ -35,6 +37,17 @@ CHANNEL_TRANSITION = 2_000
 # nothing can alias into the band before the sharp channel filter runs.
 COARSE_CUTOFF = 60_000
 COARSE_TRANSITION = 40_000
+
+# Squelch threshold in dB, below which the channel is treated as empty and the
+# demodulator is fed silence instead of noise.
+#
+# This is not a nicety. Feeding the clock recovery noise wrecks it: measured on a
+# synthetic P25 signal at 20 dB SNR, 25 ms of noise ahead of a transmission still
+# decodes, and 50 ms decodes nothing at all, because the timing loop is driven
+# away by noise excursions five times larger than the signal and cannot recover.
+# Since every real transmission is preceded by noise, without this the decoder
+# would never read a channel it had just retuned to.
+DEFAULT_SQUELCH_DB = -60.0
 
 # Frames dropped for each one published. The original accepted this as an
 # argument and then ignored it, hardcoding 128 in the block.
@@ -95,6 +108,7 @@ class Radio(gr.top_block):
 
 		self._xlate = None
 		self.demod = None
+		self.squelch = None
 
 		if enable_iq or enable_decode:
 			channel = rf.n_channels // 2 if decode_channel is None else decode_channel
@@ -152,9 +166,17 @@ class Radio(gr.top_block):
 		if enable_decode:
 			# C4FM demodulation and symbol recovery run here, in C++. What
 			# reaches Python is 4800 symbols per second, which is nothing.
+			# Measures the channel so the squelch can set itself: the right
+			# threshold depends on gain, antenna and site, and a fixed number
+			# would be wrong everywhere except where it was chosen.
+			self.power_probe = analog.probe_avg_mag_sqrd_c(0.0, 0.01)
+			self.connect(self.channel_filter, self.power_probe)
+
+			self.squelch = analog.pwr_squelch_cc(DEFAULT_SQUELCH_DB, alpha = 0.01,
+												 ramp = 0, gate = False)
 			self.demod = C4fmDemod(self.actual_iq_rate)
 			self.symbol_sink = _push_sink(gr.sizeof_float, 1, symbol_endpoint, 'decoder')
-			self.connect(self.channel_filter, self.demod)
+			self.connect(self.channel_filter, self.squelch, self.demod)
 			self.connect((self.demod, 0), self.symbol_sink)
 
 			# Port 1 is the demodulated signal ahead of clock recovery. Only
@@ -182,6 +204,33 @@ class Radio(gr.top_block):
 
 		self._xlate.set_center_freq(self.rf.channel_offset(channel))
 		self.decode_channel = channel
+
+	def channel_power_db(self) -> float | None:
+		"""Current average power of the channel the IQ tap is on."""
+		probe = getattr(self, 'power_probe', None)
+
+		if probe is None:
+			return None
+
+		level = probe.level()
+
+		return 10 * math.log10(level) if level > 0 else -200.0
+
+	def set_squelch(self, threshold_db: float) -> None:
+		"""Level below which the channel counts as empty.
+
+		Wants to sit a few dB above the noise floor of the channel being
+		decoded, so it opens on a transmission and stays shut on noise.
+		"""
+		if getattr(self, 'squelch', None) is None:
+			return
+
+		self.squelch.set_threshold(threshold_db)
+		self.squelch_db = threshold_db
+
+	@property
+	def squelch_threshold(self) -> float | None:
+		return getattr(self, 'squelch_db', DEFAULT_SQUELCH_DB if self.decode_enabled else None)
 
 	def set_gain(self, gain: float) -> None:
 		self.source.set_gain(gain)

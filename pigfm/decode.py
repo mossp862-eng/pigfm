@@ -35,6 +35,13 @@ RETUNE_SETTLE_SECONDS = 0.4
 # it a busy system makes the tap hop continuously and never decode anything.
 CHANNEL_HOLD_SECONDS = 2.0
 
+# How far above the measured noise floor to set the squelch. Enough to stay shut
+# on noise, low enough to open on a weak transmission.
+SQUELCH_MARGIN_DB = 6.0
+
+# Seconds between squelch adjustments.
+SQUELCH_INTERVAL = 2.0
+
 
 @dataclass
 class ChannelStats:
@@ -134,6 +141,11 @@ class DecodeMonitor:
 		# reported with how strong that radio was when it transmitted.
 		self.power: dict[int, float] = {}
 
+		# Lowest channel power seen since the last retune, which is the noise
+		# floor of whatever the tap is sitting on.
+		self._quietest: float | None = None
+		self._squelch_at = 0.0
+
 		self.direction = config.rf.direction
 		self.pinned = pinned_channel is not None
 		self.channel = pinned_channel if self.pinned else radio.decode_channel
@@ -157,6 +169,7 @@ class DecodeMonitor:
 		self.radio.set_decode_channel(channel)
 		self.channel = channel
 		self._tuned_at = time.monotonic()
+		self._quietest = None
 
 		# The old channel's partial frame means nothing on the new one.
 		self.framer = P25Framer()
@@ -189,8 +202,36 @@ class DecodeMonitor:
 
 		return result.started
 
+	def update_squelch(self) -> float | None:
+		"""Track the channel's noise floor and keep the squelch just above it.
+
+		The right threshold depends on gain, antenna and site, so it is measured
+		rather than configured. It matters more than it sounds: feeding the clock
+		recovery noise rather than silence stops it locking onto the
+		transmission that follows.
+		"""
+		power = self.radio.channel_power_db() if hasattr(self.radio, 'channel_power_db') else None
+
+		if power is None or power <= -199.0:
+			return None
+
+		self._quietest = power if self._quietest is None else min(self._quietest, power)
+
+		now = time.monotonic()
+
+		if now - self._squelch_at < SQUELCH_INTERVAL:
+			return None
+
+		self._squelch_at = now
+		threshold = self._quietest + SQUELCH_MARGIN_DB
+		self.radio.set_squelch(threshold)
+
+		return threshold
+
 	def poll_symbols(self, timeout_ms: int = 0) -> list:
 		"""Decode whatever symbols have arrived. Returns (unit, tsbks) pairs."""
+		self.update_squelch()
+
 		symbols = self.symbols.get_symbols(timeout_ms)
 
 		if symbols.size == 0 or not self.settled:

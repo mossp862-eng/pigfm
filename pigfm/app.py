@@ -12,7 +12,8 @@ import sys
 from . import config as config_module
 from .eventlog import EventLog
 from .frames import (DEFAULT_TIMEOUT_MS, FrameSource, IqSource, SymbolSource,
-                     SyntheticFrameSource, ZmqFrameSource, nominal_frame_interval)
+                     SyntheticFrameSource, ZmqFrameSource, keep_one_in_n_for,
+                     nominal_frame_interval)
 from .scanner import ChannelScanner
 from .ui import Ui
 
@@ -146,6 +147,10 @@ def parse_args(argv = None):
 	parser.add_argument('--decode', action = 'store_true',
 						help = 'decode P25 metadata (talkgroup and radio IDs) and print '
 							   'it to the terminal instead of running the spectrum display')
+	parser.add_argument('--frame-rate', type = float, default = None, metavar = 'HZ',
+						help = 'spectrum frames per second (default 6). Higher notices a short '
+							   'transmission sooner, which is what decides whether a brief one '
+							   'can be decoded at all')
 	parser.add_argument('--watch', action = 'store_true',
 						help = 'log every transmission heard, with time, channel, duration and '
 							   'strength. Works on any signal, not only P25')
@@ -190,6 +195,15 @@ def apply_tuning_offset(config, args) -> None:
 
 	elif args.tuning_offset:
 		config.rf.tuning_offset = args.tuning_offset
+
+
+def _keep_one_in_n(config, args, default_rate: float | None = None) -> int:
+	"""Translate --frame-rate into the flowgraph's decimation."""
+	from .frames import KEEP_ONE_IN_N
+
+	rate = args.frame_rate if args.frame_rate else default_rate
+
+	return keep_one_in_n_for(config.rf, rate) if rate else KEEP_ONE_IN_N
 
 
 def run_watch_mode(config, args) -> int:
@@ -244,7 +258,8 @@ def run_decode(config, args) -> int:
 	try:
 		radio = Radio(config.rf, enable_iq = args.iq or scanning,
 					  enable_decode = not scanning, decode_channel = channel,
-					  device_args = args.device_args)
+					  device_args = args.device_args,
+					  keep_one_in_n = _keep_one_in_n(config, args, 24.0))
 	except RadioBusyError as exc:
 		print(f'pigfm: {exc}', file = sys.stderr)
 		return 1
@@ -302,7 +317,8 @@ def main(argv = None) -> int:
 	if args.synthetic:
 		source: FrameSource = SyntheticFrameSource(
 			config.rf.n_channels, seed = args.seed,
-			frame_interval = nominal_frame_interval(config.rf))
+			frame_interval = nominal_frame_interval(
+				config.rf, _keep_one_in_n(config, args)))
 	else:
 		# Built and started before curses takes the terminal, so GNURadio's
 		# startup chatter lands on a normal screen. The original started it with
@@ -311,7 +327,8 @@ def main(argv = None) -> int:
 
 		try:
 			radio = Radio(config.rf, enable_iq = args.iq, decode_channel = args.iq_channel,
-						  device_args = args.device_args)
+						  device_args = args.device_args,
+						  keep_one_in_n = _keep_one_in_n(config, args))
 		except RadioBusyError as exc:
 			print(f'pigfm: {exc}', file = sys.stderr)
 			return 1

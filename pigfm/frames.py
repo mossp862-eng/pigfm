@@ -38,6 +38,16 @@ KEEP_ONE_IN_N = 128
 KEY_UP_CHANCE = 0.03
 
 
+def keep_one_in_n_for(rf: RfConfig, frame_rate: float) -> int:
+	"""Frames to drop per frame published, to hit a wanted frame rate.
+
+	The frame rate sets how quickly a transmission is noticed, which decides
+	whether a short one can be decoded at all: at the default six frames a
+	second a burst is already a sixth of a second old before anything reacts.
+	"""
+	return max(1, int(round(rf.samp_rate / rf.fft_size / max(frame_rate, 0.1))))
+
+
 def nominal_frame_interval(rf: RfConfig, keep_one_in_n: int = KEEP_ONE_IN_N) -> float:
 	"""Seconds between frames the radio actually publishes.
 
