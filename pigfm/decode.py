@@ -280,9 +280,15 @@ def run_diagnostic(config: Config, radio, spectrum_source, symbol_source,
 	try:
 		while True:
 			for event in monitor.poll_spectrum():
+				# Say whether the tap actually moved. It does not always: the
+				# hold time stops a busy band making it hop continuously, and
+				# claiming to follow when it did not is worse than saying
+				# nothing.
+				followed = (not monitor.pinned) and monitor.channel == event.channel
+				note = f', now decoding it' if followed else ''
+
 				print(f'  {time.strftime("%H:%M:%S")}  channel {event.channel} active '
-					  f'at {event.pwr:.1f}dB'
-					  + ('' if monitor.pinned else f', following to {describe(monitor.channel)}'))
+					  f'at {event.pwr:.1f}dB{note}')
 
 			for unit, tsbks in monitor.poll_symbols(timeout_ms = 50):
 				stamp = time.strftime('%H:%M:%S')
