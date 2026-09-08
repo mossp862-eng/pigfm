@@ -97,3 +97,59 @@ def test_identities_survive_noise():
 		found = _identities(_demodulate(add_noise(iq, snr_db, rng)))
 
 		assert CALLS[0] in found, f'lost the first call at {snr_db} dB SNR'
+
+
+def _at_snr(iq: np.ndarray, snr_db: float, lead_seconds: float, seed: int = 5):
+	"""Signal preceded by silence, with the noise level fixed regardless of how
+	long the lead-in is."""
+	rng = np.random.default_rng(seed)
+	sigma = np.sqrt(1.0 / (10 ** (snr_db / 10)) / 2)
+
+	lead = np.zeros(int(SAMPLE_RATE * lead_seconds), dtype = np.complex64)
+	clean = np.concatenate([lead, iq])
+	noise = rng.normal(0, sigma, clean.size) + 1j * rng.normal(0, sigma, clean.size)
+
+	return (clean + noise).astype(np.complex64), 10 * np.log10(2 * sigma ** 2)
+
+
+def _demodulate_squelched(iq: np.ndarray, threshold_db: float) -> np.ndarray:
+	from gnuradio import analog
+
+	flowgraph = gr.top_block()
+	source = blocks.vector_source_c(iq.tolist(), False)
+	squelch = analog.pwr_squelch_cc(threshold_db, alpha = 0.01, ramp = 0, gate = False)
+	sink = blocks.vector_sink_f()
+
+	flowgraph.connect(source, squelch, C4fmDemod(SAMPLE_RATE), sink)
+	flowgraph.run()
+
+	return np.array(sink.data(), dtype = np.float32)
+
+
+def test_noise_before_a_transmission_stops_the_decoder_locking():
+	"""Records the failure the squelch exists to prevent.
+
+	The quadrature demodulator turns noise into excursions several times larger
+	than the signal, which drives the timing loop away, and it does not recover
+	when the transmission starts.
+	"""
+	iq, _ = _at_snr(_transmit(), 20.0, lead_seconds = 0.2)
+
+	assert _identities(_demodulate(iq)) == []
+
+
+def test_squelching_the_noise_restores_it():
+	iq, noise_db = _at_snr(_transmit(), 20.0, lead_seconds = 0.2)
+
+	found = _identities(_demodulate_squelched(iq, noise_db + 6.0))
+
+	assert CALLS[0] in found, 'squelched decode should recover the transmitted IDs'
+
+
+def test_squelch_does_not_harm_a_signal_that_was_already_there():
+	iq, noise_db = _at_snr(_transmit(), 20.0, lead_seconds = 0.0)
+
+	found = _identities(_demodulate_squelched(iq, noise_db + 6.0))
+
+	for call in CALLS:
+		assert call in found
