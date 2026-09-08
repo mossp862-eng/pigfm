@@ -11,7 +11,7 @@ import sys
 
 from . import config as config_module
 from .eventlog import EventLog
-from .frames import (DEFAULT_TIMEOUT_MS, FM_ENDPOINT, FrameSource, IqSource, SymbolSource,
+from .frames import (DEFAULT_TIMEOUT_MS, FrameSource, IqSource, SymbolSource,
                      SyntheticFrameSource, ZmqFrameSource, nominal_frame_interval)
 from .scanner import ChannelScanner
 from .ui import Ui
@@ -208,7 +208,6 @@ def run_decode(config, args) -> int:
 
 	spectrum = ZmqFrameSource(config.rf.n_channels)
 	symbols = None if scanning else SymbolSource()
-	fm = None if scanning else SymbolSource(FM_ENDPOINT)
 	iq = IqSource() if scanning else None
 
 	try:
@@ -221,7 +220,7 @@ def run_decode(config, args) -> int:
 	finally:
 		spectrum.close()
 
-		for source in (symbols, fm, iq):
+		for source in (symbols, iq):
 			if source is not None:
 				source.close()
 

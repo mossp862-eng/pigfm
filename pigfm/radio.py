@@ -57,7 +57,7 @@ class Radio(gr.top_block):
 				 iq_rate: int = IQ_RATE, keep_one_in_n: int = DEFAULT_KEEP_ONE_IN_N,
 				 decode_channel: int | None = None, device_args: str = '',
 				 enable_decode: bool = False, symbol_endpoint: str = SYMBOL_ENDPOINT,
-				 fm_endpoint: str = FM_ENDPOINT):
+				 fm_endpoint: str = FM_ENDPOINT, enable_fm: bool = False):
 		super().__init__('pigfm_radio', catch_exceptions = True)
 
 		self.rf = rf
@@ -78,7 +78,7 @@ class Radio(gr.top_block):
 			self._build_iq_branch(rf, iq_endpoint, iq_rate, channel,
 								  enable_iq = enable_iq, enable_decode = enable_decode,
 								  symbol_endpoint = symbol_endpoint,
-								  fm_endpoint = fm_endpoint)
+								  fm_endpoint = fm_endpoint, enable_fm = enable_fm)
 
 	def _build_spectrum_branch(self, rf: RfConfig, endpoint: str, keep_one_in_n: int) -> None:
 		"""Unchanged signal path. Do not alter without re-running the golden-master tests."""
@@ -99,7 +99,7 @@ class Radio(gr.top_block):
 	def _build_iq_branch(self, rf: RfConfig, endpoint: str, iq_rate: int, channel: int,
 						 enable_iq: bool = True, enable_decode: bool = False,
 						 symbol_endpoint: str = SYMBOL_ENDPOINT,
-						 fm_endpoint: str = FM_ENDPOINT) -> None:
+						 fm_endpoint: str = FM_ENDPOINT, enable_fm: bool = False) -> None:
 		"""Extract one 12.5 kHz channel as raw IQ, for the decoder to consume.
 
 		Decimation is split in two. A single stage from 3.2 MSPS straight down to
@@ -134,13 +134,19 @@ class Radio(gr.top_block):
 			self.demod = C4fmDemod(self.actual_iq_rate)
 			self.symbol_sink = zeromq.push_sink(gr.sizeof_float, 1, symbol_endpoint,
 												SINK_TIMEOUT_MS, False, -1, True)
-			# Port 1 is the demodulated signal ahead of clock recovery, which is
-			# what signal quality has to be measured on.
-			self.fm_sink = zeromq.push_sink(gr.sizeof_float, 1, fm_endpoint,
-											SINK_TIMEOUT_MS, False, -1, True)
 			self.connect(self.channel_filter, self.demod)
 			self.connect((self.demod, 0), self.symbol_sink)
-			self.connect((self.demod, 1), self.fm_sink)
+
+			# Port 1 is the demodulated signal ahead of clock recovery. Only
+			# published when something is going to read it: a sink nobody drains
+			# throttles the whole flowgraph.
+			if enable_fm:
+				self.fm_sink = zeromq.push_sink(gr.sizeof_float, 1, fm_endpoint,
+												SINK_TIMEOUT_MS, False, -1, True)
+				self.connect((self.demod, 1), self.fm_sink)
+			else:
+				self.fm_null = blocks.null_sink(gr.sizeof_float)
+				self.connect((self.demod, 1), self.fm_null)
 
 	@property
 	def iq_enabled(self) -> bool:
