@@ -169,6 +169,27 @@ Then decode it:
 
 `./pigfm.py --decode --base-station --decode-channel 42 config/rmr.ini`
 
+**Which way you are tuned decides what you can learn.** The wire format is the
+same in both directions and nothing in a frame says which it is, so PiGFM takes
+it from the tuning:
+
+| tuned to | you hear | identities you get |
+|---|---|---|
+| the uplink (default) | radios transmitting | the radio that sent it, and it is **near you** |
+| the downlink (`--base-station`) | the network transmitting | radios the network names, which may be anywhere |
+
+For noticing radios close to the receiver, the uplink is the one that matters. A
+radio has to announce itself to register, affiliate, request a channel or raise
+an emergency, and hearing that transmission means the radio is within range.
+Those messages are marked `RADIO NEARBY`; a radio merely named in a message from
+the network is marked `radio named`.
+
+The catch is that the control channel is the only place this traffic is
+concentrated, and finding it is the hard part. Following whichever channel just
+became active is too slow for a short registration burst: detection takes a sixth
+of a second and retuning takes another half, by which time the burst is over. Use
+`--decode-channel` to sit on the inbound control channel once you have found it.
+
 Radios heard near the receiver are printed as they arrive, with the time, the
 channel, how strong that radio was, and its ID, and appended to `sightings.log`:
 

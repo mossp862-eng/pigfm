@@ -295,3 +295,41 @@ with long integration and with burst gating, in both modulation families.
 - Flowgraph: sink timeout 100 ms -> 20 ms, FM tap opt-in, scan builds only the
   branch it reads
 - 84 tests (was 66)
+
+---
+
+# Feature: inbound (uplink) message decoding
+
+Every opcode before this was outbound. The uplink carries the other half of the
+conversation, and that is where a nearby radio announces itself.
+
+- [x] 11 ISP opcodes, with the four that are unprompted presence announcements
+      marked: unit registration, location registration, group affiliation,
+      emergency alarm
+- [x] Direction is derived from the tuning, not guessed from the frame: as
+      configured PiGFM is on the mobile uplink, `--base-station` moves it to the
+      downlink
+- [x] Sightings record what the radio was doing and whether it announced itself
+- [x] 6 tests, including that the same bits decode differently each way
+
+## Unverified, same standing as the trellis table
+The inbound field layouts follow the standard's convention: source address in
+the last 24 bits of the argument field, talkgroup in the 16 above it. Not
+checked against live traffic. A wrong layout reports a plausible but wrong ID,
+which is worse than reporting nothing, so this needs a real signal before it is
+trusted.
+
+## Attenuator removed (2026-09-08)
+Self test re-run. Roughly +12 dB at low and mid gains:
+
+| gain | with attenuator | without |
+|---|---|---|
+| 0 | 14.6 dB | 28.6 dB |
+| 20 | 30.5 | 43.0 |
+| 30 | 37.3 | 44.9 |
+| 40 | 45.2 | 45.0 |
+| 49.6 | 42.8 | 37.8 |
+
+30 and 40 now give the same SNR, and 49.6 clearly overloads (noise floor jumps
+to -3.4 dB). Monitoring at 35: no worse than 40 on sensitivity, with headroom
+for the stronger signals the attenuator used to absorb.
