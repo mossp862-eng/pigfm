@@ -74,10 +74,21 @@ class SymbolNormaliser:
 	# running one is abandoned rather than crawled towards.
 	SNAP_RATIO = 2.5
 
+	# Below this the block carries no signal and must not be scaled up.
+	#
+	# The demodulator maps the outer symbols to +/-3, so anything real measures
+	# around two or three here; what sits far below is the shaping filter
+	# ringing down after the squelch shut. Normalising that divides by almost
+	# nothing: a residue measuring 2e-4 came back out at full scale, and the
+	# framer built hundreds of frames a minute out of the amplified nothing,
+	# all reading NAC 0x000 because an all-zero NID is a valid codeword.
+	SILENCE_LEVEL = 0.25
+
 	def __init__(self, alpha: float = 0.02, initial_scale: float = 1.0,
-				 snap_ratio: float = SNAP_RATIO):
+				 snap_ratio: float = SNAP_RATIO, silence_level: float = SILENCE_LEVEL):
 		self.alpha = alpha
 		self.snap_ratio = snap_ratio
+		self.silence_level = silence_level
 		self.offset = 0.0
 		self.scale = initial_scale
 		self._started = False
@@ -95,6 +106,9 @@ class SymbolNormaliser:
 		# robust estimate of where they are. Robust matters: a mean or a max
 		# would be dragged around by noise spikes.
 		block_scale = float(np.percentile(np.abs(symbols - block_offset), 95))
+
+		if block_scale < self.silence_level:
+			return np.zeros_like(symbols)
 
 		block_scale = max(block_scale, 1e-6)
 

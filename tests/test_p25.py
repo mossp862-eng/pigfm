@@ -429,3 +429,50 @@ def test_a_frame_with_an_impossible_duid_is_rejected():
 			assert len(units) == 1, f'DUID 0x{duid:X} is real and must be accepted'
 		else:
 			assert units == [], f'DUID 0x{duid:X} does not exist and must be rejected'
+
+
+def test_silence_does_not_become_frames():
+	"""The squelch outputs zeros when it shuts, and the shaping filter rings
+	down through them. Scaling that residue up to full amplitude produced
+	hundreds of frames a minute out of nothing, all reading NAC 0x000 because
+	an all-zero Network Identifier is itself a valid codeword.
+	"""
+	from pigfm.dsp.p25.framing import P25Framer
+	from pigfm.dsp.p25.symbols import SymbolNormaliser
+
+	rng = np.random.default_rng(2)
+	residue = rng.normal(0, 1e-4, 40000).astype(np.float32)
+
+	assert float(SymbolNormaliser().normalise(residue).std()) < 0.01
+
+	framer = P25Framer()
+	units = []
+
+	for start in range(0, residue.size, 4800):
+		units += framer.feed(residue[start: start + 4800])
+
+	assert units + framer.flush() == []
+
+
+def test_ring_down_after_the_squelch_does_not_become_frames():
+	rng = np.random.default_rng(2)
+	ring = np.convolve(rng.normal(0, 1e-4, 40000),
+					   np.ones(30) / 30, mode = 'same').astype(np.float32)
+
+	framer = P25Framer()
+	units = []
+
+	for start in range(0, ring.size, 4800):
+		units += framer.feed(ring[start: start + 4800])
+
+	assert units + framer.flush() == []
+
+
+def test_a_real_signal_is_still_normalised():
+	"""The silence floor must not swallow a genuine weak signal."""
+	from pigfm.dsp.p25.symbols import SymbolNormaliser
+
+	symbols = _symbols_for(_build_tsdu(0x293, [(1234, 5551234)]) * 4)
+	normalised = SymbolNormaliser().normalise(symbols)
+
+	assert float(np.percentile(np.abs(normalised), 95)) > 2.0
