@@ -77,3 +77,58 @@ def test_instantaneous_frequency_recovers_a_tone():
 	measured = instantaneous_frequency(tone, rate)
 
 	assert abs(float(np.mean(measured)) - 1200) < 5
+
+
+def _burst_in_silence(active_fraction = 1 / 7):
+	"""A C4FM transmission surrounded by a quiet channel."""
+	rng = np.random.default_rng(4)
+	signal = modulate_c4fm(
+		dibits_to_symbols([int(d) for d in rng.integers(0, 4, 6000)]), SAMPLE_RATE)
+
+	quiet_len = int(signal.size * (1 / active_fraction - 1))
+	quiet = (rng.normal(0, 0.02, quiet_len)
+			 + 1j * rng.normal(0, 0.02, quiet_len)).astype(np.complex64)
+
+	half = quiet_len // 2
+
+	return np.concatenate([quiet[: half], signal, quiet[half:]])
+
+
+def test_burst_gating_finds_a_transmission_the_average_misses():
+	"""The reason the scan gates rather than averaging over its dwell.
+
+	A channel busy a seventh of the time reads as noise across the whole window
+	and as plain C4FM across its transmission alone.
+	"""
+	from pigfm.dsp.p25.detect import classify_bursts
+
+	mixed = _burst_in_silence()
+
+	assert classify(mixed, SAMPLE_RATE).modulation == 'none'
+
+	verdict, duty = classify_bursts(mixed, SAMPLE_RATE)
+
+	assert verdict.modulation == 'p25-c4fm'
+	assert verdict.fsk_4800 >= DETECTION_THRESHOLD
+	assert 0.05 < duty < 0.35
+
+
+def test_burst_gating_leaves_a_continuous_signal_alone():
+	"""A control channel is on all the time; gating must not damage it."""
+	from pigfm.dsp.p25.detect import classify_bursts
+
+	verdict, duty = classify_bursts(_c4fm(), SAMPLE_RATE)
+
+	assert verdict.modulation == 'p25-c4fm'
+	assert duty > 0.5
+
+
+def test_burst_gating_on_silence_returns_nothing_found():
+	from pigfm.dsp.p25.detect import burst_samples, classify_bursts
+
+	rng = np.random.default_rng(SEED)
+	quiet = (rng.normal(0, 0.02, 200_000)
+			 + 1j * rng.normal(0, 0.02, 200_000)).astype(np.complex64)
+
+	assert burst_samples(quiet, SAMPLE_RATE).size < quiet.size
+	assert classify_bursts(quiet, SAMPLE_RATE)[0].modulation == 'none'

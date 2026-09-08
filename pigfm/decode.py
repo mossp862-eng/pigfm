@@ -14,7 +14,7 @@ from .config import Config
 from .dsp.noise_floor import NoiseFloorLeveller
 from .dsp.p25.constants import DUID_NAMES, DUID_TSDU, TSBK_ENCODED_DIBITS
 from .dsp.p25.framing import P25Framer
-from .dsp.p25.detect import classify
+from .dsp.p25.detect import classify_bursts
 from .dsp.p25.symbols import baud_line_strength, c4fm_quality
 from .dsp.p25.tsbk import decode_tsbk
 from .scanner import ChannelScanner
@@ -360,7 +360,8 @@ def scan_channels(config: Config, radio, spectrum_source, symbol_source,
 	print(f'\nTesting the {len(candidates)} strongest channels ({dwell_seconds:.0f}s each).')
 	print('Both P25 families are tested: Phase 1 C4FM keys the frequency, Phase 2')
 	print('keys the phase, and each is invisible to the other test.\n')
-	print(f'{"ch":>4} {"MHz":>11} {"peak dB":>8} {"C4FM":>8} {"Phase2":>8} {"verdict":>14}')
+	print(f'{"ch":>4} {"MHz":>11} {"peak dB":>8} {"active":>8} {"C4FM":>8} {"Phase2":>8} '
+		  f'{"verdict":>10}')
 
 	found = []
 
@@ -385,16 +386,19 @@ def scan_channels(config: Config, radio, spectrum_source, symbol_source,
 
 		if samples.size == 0:
 			print(f'{channel:>4} {rf.channel_to_freq(channel) / 1e6:>11.4f} '
-				  f'{peak[channel]:>8.1f} {"-":>8} {"-":>8} {"no data":>14}')
+				  f'{peak[channel]:>8.1f} {"-":>8} {"-":>8} {"-":>8} {"no data":>10}')
 			continue
 
-		verdict = classify(samples, rate)
+		# Judged on its transmissions, not on the silence between them: a channel
+		# busy a tenth of the time is invisible in a dwell average.
+		verdict, duty = classify_bursts(samples, rate)
 
 		if verdict.is_p25:
 			found.append(channel)
 
 		print(f'{channel:>4} {rf.channel_to_freq(channel) / 1e6:>11.4f} {peak[channel]:>8.1f} '
-			  f'{verdict.fsk_4800:>7.1f}x {verdict.linear_6000:>7.1f}x {verdict.modulation:>14}')
+			  f'{duty * 100:>7.0f}% {verdict.fsk_4800:>7.1f}x {verdict.linear_6000:>7.1f}x '
+			  f'{verdict.modulation:>10}')
 
 	print()
 

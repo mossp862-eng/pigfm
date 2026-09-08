@@ -128,3 +128,80 @@ def classify(iq: np.ndarray, sample_rate: float,
 
 	return Verdict('none', max(fsk, linear), fsk, linear,
 				   f'no clock line: 4800 {fsk:.1f}x, 6000 {linear:.1f}x')
+
+
+# How far above its own noise floor a channel has to rise to count as
+# transmitting. Ten dB is comfortably clear of the noise without discarding a
+# weak but real signal.
+BURST_MARGIN_DB = 10.0
+
+# Ignore anything shorter than this; it is a click, not a transmission.
+MIN_BURST_SECONDS = 0.05
+
+
+def burst_samples(iq: np.ndarray, sample_rate: float,
+				  margin_db: float = BURST_MARGIN_DB,
+				  min_seconds: float = MIN_BURST_SECONDS) -> np.ndarray:
+	"""Return only the samples where the channel is actually transmitting.
+
+	A channel that is quiet 90% of the time will be judged on its silence if you
+	average across a whole dwell, which is how real traffic gets missed. This
+	keeps the transmissions and throws the gaps away.
+	"""
+	iq = np.asarray(iq)
+
+	if iq.size < 1024:
+		return iq
+
+	envelope = 20 * np.log10(np.abs(iq) + 1e-12)
+
+	window = max(1, int(sample_rate * 0.003))
+	smoothed = np.convolve(envelope, np.ones(window) / window, mode = 'same')
+
+	floor = float(np.percentile(smoothed, 30))
+
+	# Frequency modulation has a constant envelope by definition, so a channel
+	# transmitting without pause looks perfectly flat. So does an empty one.
+	# Neither has bursts to gate on, and the whole span is the right answer for
+	# both: a control channel is on throughout, and silence classifies as
+	# nothing anyway.
+	if float(smoothed.max()) - floor < margin_db:
+		return iq
+
+	active = smoothed > floor + margin_db
+
+	if active.mean() < 0.002:
+		return iq[:0]
+
+	# Drop runs too short to be a transmission.
+	edges = np.diff(active.astype(np.int8))
+	starts = np.flatnonzero(edges == 1)
+	stops = np.flatnonzero(edges == -1)
+
+	if active[0]:
+		starts = np.r_[0, starts]
+	if active[-1]:
+		stops = np.r_[stops, active.size - 1]
+
+	minimum = int(min_seconds * sample_rate)
+	keep = [iq[a: b] for a, b in zip(starts, stops) if b - a >= minimum]
+
+	return np.concatenate(keep) if keep else iq[:0]
+
+
+def classify_bursts(iq: np.ndarray, sample_rate: float,
+					threshold: float = DETECTION_THRESHOLD) -> tuple[Verdict, float]:
+	"""Classify a channel on its transmissions alone.
+
+	Returns the verdict and the fraction of the dwell that was active. Falls
+	back to the whole dwell for a channel that is on continuously, which is what
+	a control channel looks like.
+	"""
+	iq = np.asarray(iq)
+	bursts = burst_samples(iq, sample_rate)
+	duty = bursts.size / max(iq.size, 1)
+
+	if bursts.size < 8192:
+		return classify(iq, sample_rate, threshold), duty
+
+	return classify(bursts, sample_rate, threshold), duty
