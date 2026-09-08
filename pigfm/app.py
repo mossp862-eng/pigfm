@@ -11,7 +11,7 @@ import sys
 
 from . import config as config_module
 from .eventlog import EventLog
-from .frames import (DEFAULT_TIMEOUT_MS, FM_ENDPOINT, FrameSource, SymbolSource,
+from .frames import (DEFAULT_TIMEOUT_MS, FM_ENDPOINT, FrameSource, IqSource, SymbolSource,
                      SyntheticFrameSource, ZmqFrameSource, nominal_frame_interval)
 from .scanner import ChannelScanner
 from .ui import Ui
@@ -196,25 +196,35 @@ def run_decode(config, args) -> int:
 
 	channel = args.decode_channel if args.decode_channel is not None else args.iq_channel
 
-	radio = Radio(config.rf, enable_iq = args.iq, enable_decode = True,
-				  decode_channel = channel, device_args = args.device_args)
+	# The scan classifies from raw IQ and needs nothing else, so it does not
+	# build the demodulator. An unconsumed branch backpressures the flowgraph
+	# and makes the receiver overrun.
+	scanning = args.decode_scan
+
+	radio = Radio(config.rf, enable_iq = args.iq or scanning,
+				  enable_decode = not scanning, decode_channel = channel,
+				  device_args = args.device_args)
 	radio.start()
 
 	spectrum = ZmqFrameSource(config.rf.n_channels)
-	symbols = SymbolSource()
-	fm = SymbolSource(FM_ENDPOINT)
+	symbols = None if scanning else SymbolSource()
+	fm = None if scanning else SymbolSource(FM_ENDPOINT)
+	iq = IqSource() if scanning else None
 
 	try:
-		if args.decode_scan:
-			return scan_channels(config, radio, spectrum, symbols, fm_source = fm)
+		if scanning:
+			return scan_channels(config, radio, spectrum, None, iq_source = iq)
 
 		return run_diagnostic(config, radio, spectrum, symbols,
 							  pinned_channel = args.decode_channel,
 							  sightings_file = args.sightings or None)
 	finally:
 		spectrum.close()
-		symbols.close()
-		fm.close()
+
+		for source in (symbols, fm, iq):
+			if source is not None:
+				source.close()
+
 		radio.close()
 
 

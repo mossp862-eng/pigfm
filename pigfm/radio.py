@@ -40,9 +40,15 @@ COARSE_TRANSITION = 40_000
 # argument and then ignored it, hardcoding 128 in the block.
 DEFAULT_KEEP_ONE_IN_N = 128
 
-# ZMQ sink timeout in ms. Samples are dropped rather than blocking the flowgraph
-# when nothing is consuming the far end.
-SINK_TIMEOUT_MS = 100
+# ZMQ sink timeout in ms. A sink whose consumer is absent or slow drops after
+# this long rather than blocking.
+#
+# Deliberately short. Every sink that is built applies backpressure to the whole
+# flowgraph while it waits, so a branch nobody is reading will stall the ones
+# that are being read, and the receiver then overruns and drops samples. Keeping
+# it brief means an idle branch costs throughput rather than wedging the graph.
+# Build only the branches you intend to consume as well.
+SINK_TIMEOUT_MS = 20
 
 
 class Radio(gr.top_block):

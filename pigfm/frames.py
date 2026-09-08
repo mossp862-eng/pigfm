@@ -210,3 +210,39 @@ class SymbolSource:
 	def close(self) -> None:
 		self._poller.unregister(self._socket)
 		self._socket.close(linger = 0)
+
+
+class IqSource:
+	"""Pulls raw channel IQ published by the flowgraph.
+
+	Signal classification needs complex samples: the envelope carries the timing
+	of a linearly modulated signal, and the FM demodulated stream has thrown
+	that away.
+	"""
+
+	def __init__(self, endpoint: str = IQ_ENDPOINT):
+		self.endpoint = endpoint
+		self._context = zmq.Context.instance()
+		self._socket = self._context.socket(zmq.PULL)
+		self._socket.connect(endpoint)
+
+		self._poller = zmq.Poller()
+		self._poller.register(self._socket, zmq.POLLIN)
+
+	def get_iq(self, timeout_ms: int = DEFAULT_TIMEOUT_MS) -> np.ndarray:
+		if not self._poller.poll(timeout_ms):
+			return np.empty(0, dtype = np.complex64)
+
+		blocks = []
+
+		while True:
+			try:
+				blocks.append(np.frombuffer(self._socket.recv(zmq.NOBLOCK), dtype = np.complex64))
+			except zmq.ZMQError:
+				break
+
+		return np.concatenate(blocks) if blocks else np.empty(0, dtype = np.complex64)
+
+	def close(self) -> None:
+		self._poller.unregister(self._socket)
+		self._socket.close(linger = 0)

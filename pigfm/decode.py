@@ -14,6 +14,7 @@ from .config import Config
 from .dsp.noise_floor import NoiseFloorLeveller
 from .dsp.p25.constants import DUID_NAMES, DUID_TSDU, TSBK_ENCODED_DIBITS
 from .dsp.p25.framing import P25Framer
+from .dsp.p25.detect import classify
 from .dsp.p25.symbols import baud_line_strength, c4fm_quality
 from .dsp.p25.tsbk import decode_tsbk
 from .scanner import ChannelScanner
@@ -313,8 +314,8 @@ def run_diagnostic(config: Config, radio, spectrum_source, symbol_source,
 
 
 def scan_channels(config: Config, radio, spectrum_source, symbol_source,
-				  fm_source = None, n_channels: int = 12, dwell_seconds: float = 3.0,
-				  survey_seconds: float = 10.0) -> int:
+				  fm_source = None, iq_source = None, n_channels: int = 12,
+				  dwell_seconds: float = 3.0, survey_seconds: float = 10.0) -> int:
 	"""Sweep the strongest channels and score each for P25 C4FM.
 
 	Finding the control channel is the hard part of using a trunking decoder,
@@ -327,8 +328,11 @@ def scan_channels(config: Config, radio, spectrum_source, symbol_source,
 
 	rf = config.rf
 	leveller = NoiseFloorLeveller(rf.n_channels)
-	quality_source = fm_source if fm_source is not None else symbol_source
-	rate = radio.actual_iq_rate if fm_source is not None else 4800.0
+	quality_source = iq_source if iq_source is not None else (
+		fm_source if fm_source is not None else symbol_source)
+	fetch = ((lambda ms: iq_source.get_iq(ms)) if iq_source is not None
+			 else (lambda ms: quality_source.get_symbols(ms)))
+	rate = radio.actual_iq_rate
 
 	print(f'Surveying {rf.n_channels} channels around '
 		  f'{rf.tuned_freq / 1e6:.5f} MHz for {survey_seconds:.0f}s '
@@ -344,7 +348,7 @@ def scan_channels(config: Config, radio, spectrum_source, symbol_source,
 			levelled = leveller.level(frame)
 			peak = levelled if peak is None else np.maximum(peak, levelled)
 
-		quality_source.get_symbols(0)
+		fetch(0)
 
 	if peak is None:
 		import sys
@@ -353,9 +357,10 @@ def scan_channels(config: Config, radio, spectrum_source, symbol_source,
 
 	candidates = [int(c) for c in np.argsort(peak)[-n_channels:][::-1]]
 
-	print(f'\nTesting the {len(candidates)} strongest channels for a 4800 baud '
-		  f'clock line ({dwell_seconds:.0f}s each)\n')
-	print(f'{"ch":>4} {"MHz":>11} {"peak dB":>8} {"4800 Hz":>9} {"top line":>9} {"verdict":>12}')
+	print(f'\nTesting the {len(candidates)} strongest channels ({dwell_seconds:.0f}s each).')
+	print('Both P25 families are tested: Phase 1 C4FM keys the frequency, Phase 2')
+	print('keys the phase, and each is invisible to the other test.\n')
+	print(f'{"ch":>4} {"MHz":>11} {"peak dB":>8} {"C4FM":>8} {"Phase2":>8} {"verdict":>14}')
 
 	found = []
 
@@ -363,7 +368,7 @@ def scan_channels(config: Config, radio, spectrum_source, symbol_source,
 		radio.set_decode_channel(channel)
 		time.sleep(RETUNE_SETTLE_SECONDS)
 
-		while quality_source.get_symbols(0).size:
+		while fetch(0).size:
 			spectrum_source.get_frame(0)
 
 		blocks = []
@@ -371,22 +376,25 @@ def scan_channels(config: Config, radio, spectrum_source, symbol_source,
 
 		while time.monotonic() < deadline:
 			spectrum_source.get_frame(0)
-			block = quality_source.get_symbols(20)
+			block = fetch(20)
 
 			if block.size:
 				blocks.append(block)
 
-		samples = np.concatenate(blocks) if blocks else np.empty(0, dtype = np.float32)
-		strength, top = baud_line_strength(samples, rate)
+		samples = np.concatenate(blocks) if blocks else np.empty(0)
 
-		is_c4fm = strength >= C4FM_BAUD_THRESHOLD
-		verdict = 'P25 C4FM' if is_c4fm else ('no data' if samples.size == 0 else 'not C4FM')
+		if samples.size == 0:
+			print(f'{channel:>4} {rf.channel_to_freq(channel) / 1e6:>11.4f} '
+				  f'{peak[channel]:>8.1f} {"-":>8} {"-":>8} {"no data":>14}')
+			continue
 
-		if is_c4fm:
+		verdict = classify(samples, rate)
+
+		if verdict.is_p25:
 			found.append(channel)
 
 		print(f'{channel:>4} {rf.channel_to_freq(channel) / 1e6:>11.4f} {peak[channel]:>8.1f} '
-			  f'{strength:>8.1f}x {top:>8.0f} {verdict:>12}')
+			  f'{verdict.fsk_4800:>7.1f}x {verdict.linear_6000:>7.1f}x {verdict.modulation:>14}')
 
 	print()
 
@@ -395,8 +403,10 @@ def scan_channels(config: Config, radio, spectrum_source, symbol_source,
 			f'channel {c} ({rf.channel_to_freq(c) / 1e6:.4f} MHz)' for c in found))
 		print(f'Decode it with:  --decode --decode-channel {found[0]}')
 	else:
-		print('No 4800 baud clock line found, so nothing here is P25 C4FM.')
-		print('For reference, genuine C4FM scores around 330x, analogue FM around 3x.')
+		print('No symbol clock line found in either family, so nothing here is P25.')
+		print('For reference, real C4FM scores 50x or more on the C4FM column and a')
+		print('Phase 2 downlink scores 60x or more on the Phase2 column; analogue FM')
+		print('and noise both sit near 2x on both.')
 		print('Try: a higher gain (--gain 45), --base-station, a different centre_freq,')
 		print('or --self-test to confirm the antenna is working.')
 
