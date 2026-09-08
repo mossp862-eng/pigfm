@@ -118,6 +118,28 @@ against, the shipped `gain = 20` heard FM broadcast 30dB above the noise, while
 the self test recommends a different gain, set it in the `[rf]` section or pass
 `--gain`.
 
+### Logging what transmits nearby
+Identity needs P25. Noticing that *something* transmitted nearby, when, for how
+long and how strongly, does not:
+
+`./pigfm.py --watch --base-station config/rmr.ini`
+
+```
+18:16:20  ch 115 (166.6375 MHz)    8.6s  +16.4dB
+18:16:56  ch 115 (166.6375 MHz)   38.2s  +13.6dB
+18:17:27  ch  55 (165.8875 MHz)    4.2s  +13.6dB
+```
+
+Every transmission is printed as it ends and appended to `activity.log`, with a
+periodic summary of the busiest channels. This works on any signal, digital or
+analogue, so it is useful even where nothing P25 is in range.
+
+Each channel is judged against its own recent noise floor rather than one
+threshold across the band, because receiver response and local noise vary from
+channel to channel. `--watch-margin` sets how far above its own floor a channel
+has to rise; the default of 10dB is comfortably clear of noise without
+discarding weak signals.
+
 ### Decoding who is transmitting
 P25 systems send the radio ID and the talkgroup ID **unencrypted, even on
 encrypted systems**. PiGFM can decode them.

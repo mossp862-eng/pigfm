@@ -9,3 +9,4 @@ __pycache__/
 sightings.log
 .report.html
 .logs/
+activity.log
